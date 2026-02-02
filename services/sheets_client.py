@@ -2,8 +2,11 @@
 Google Sheets client for writing customer success data.
 
 Uses service account authentication to append data to Google Sheets.
+Supports credentials via file path OR JSON string (for cloud deployment).
 """
 
+import base64
+import json
 import logging
 import os
 from typing import Optional
@@ -33,9 +36,54 @@ class SheetsAPIError(SheetsClientError):
     pass
 
 
+def _parse_credentials_json(credentials_json: str) -> dict:
+    """
+    Parse credentials JSON from string (raw JSON or base64 encoded).
+
+    Args:
+        credentials_json: Either raw JSON string or base64 encoded JSON.
+
+    Returns:
+        Parsed credentials dictionary.
+
+    Raises:
+        SheetsAuthenticationError: If parsing fails.
+    """
+    # First, try parsing as raw JSON
+    try:
+        return json.loads(credentials_json)
+    except json.JSONDecodeError:
+        pass
+
+    # Try base64 decoding
+    try:
+        decoded = base64.b64decode(credentials_json).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        pass
+
+    # Try base64 with URL-safe alphabet
+    try:
+        decoded = base64.urlsafe_b64decode(credentials_json).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        pass
+
+    raise SheetsAuthenticationError(
+        "Failed to parse GOOGLE_SHEETS_CREDENTIALS_JSON. "
+        "Ensure it's valid JSON or base64-encoded JSON."
+    )
+
+
 class SheetsClient:
     """
     Client for interacting with Google Sheets API.
+
+    Supports two authentication methods:
+    1. GOOGLE_SHEETS_CREDENTIALS_JSON env var (raw JSON or base64 encoded)
+       - Best for cloud deployments (Railway, Heroku, etc.)
+    2. GOOGLE_SHEETS_CREDENTIALS_PATH env var (path to JSON file)
+       - Best for local development
 
     Usage:
         client = SheetsClient()
@@ -49,6 +97,7 @@ class SheetsClient:
 
     def __init__(
         self,
+        credentials_json: Optional[str] = None,
         credentials_path: Optional[str] = None,
         sheet_id: Optional[str] = None,
     ):
@@ -56,27 +105,42 @@ class SheetsClient:
         Initialize the Sheets client.
 
         Args:
+            credentials_json: Service account credentials as JSON string (raw or base64).
+                If not provided, reads from GOOGLE_SHEETS_CREDENTIALS_JSON env var.
             credentials_path: Path to service account JSON file.
                 If not provided, reads from GOOGLE_SHEETS_CREDENTIALS_PATH env var.
+                Only used if credentials_json is not provided.
             sheet_id: Google Sheet ID.
                 If not provided, reads from GOOGLE_SHEET_ID env var.
         """
-        self.credentials_path = credentials_path or os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
         self.sheet_id = sheet_id or os.getenv("GOOGLE_SHEET_ID")
-
-        if not self.credentials_path:
-            raise SheetsAuthenticationError(
-                "Credentials path not provided. Set GOOGLE_SHEETS_CREDENTIALS_PATH environment variable."
-            )
 
         if not self.sheet_id:
             raise SheetsClientError(
                 "Sheet ID not provided. Set GOOGLE_SHEET_ID environment variable."
             )
 
-        if not os.path.exists(self.credentials_path):
+        # Try credentials JSON first (for cloud deployment)
+        self.credentials_json = credentials_json or os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
+        self.credentials_path = credentials_path or os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
+
+        if self.credentials_json:
+            logger.info("Using credentials from GOOGLE_SHEETS_CREDENTIALS_JSON")
+            self._credentials_info = _parse_credentials_json(self.credentials_json)
+            self._auth_method = "json"
+        elif self.credentials_path:
+            if not os.path.exists(self.credentials_path):
+                raise SheetsAuthenticationError(
+                    f"Credentials file not found: {self.credentials_path}"
+                )
+            logger.info(f"Using credentials from file: {self.credentials_path}")
+            self._credentials_info = None
+            self._auth_method = "file"
+        else:
             raise SheetsAuthenticationError(
-                f"Credentials file not found: {self.credentials_path}"
+                "No credentials provided. Set either:\n"
+                "  - GOOGLE_SHEETS_CREDENTIALS_JSON (for cloud deployment)\n"
+                "  - GOOGLE_SHEETS_CREDENTIALS_PATH (for local development)"
             )
 
         self.service = self._build_service()
@@ -84,10 +148,17 @@ class SheetsClient:
     def _build_service(self):
         """Build the Google Sheets API service."""
         try:
-            credentials = service_account.Credentials.from_service_account_file(
-                self.credentials_path,
-                scopes=SCOPES,
-            )
+            if self._auth_method == "json":
+                credentials = service_account.Credentials.from_service_account_info(
+                    self._credentials_info,
+                    scopes=SCOPES,
+                )
+            else:
+                credentials = service_account.Credentials.from_service_account_file(
+                    self.credentials_path,
+                    scopes=SCOPES,
+                )
+
             service = build("sheets", "v4", credentials=credentials)
             logger.info("Google Sheets service initialized successfully")
             return service
