@@ -3,17 +3,20 @@ Google Sheets client for writing customer success data.
 
 Uses service account authentication to append data to Google Sheets.
 Supports credentials via file path OR JSON string (for cloud deployment).
+
+Note: All Google API imports and authentication are lazy-loaded to support
+cloud deployments where credentials are only available at runtime.
 """
 
 import base64
 import json
 import logging
 import os
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+# Type hints only - not imported at runtime
+if TYPE_CHECKING:
+    from googleapiclient._apis.sheets.v4 import SheetsResource
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,10 @@ class SheetsClient:
     2. GOOGLE_SHEETS_CREDENTIALS_PATH env var (path to JSON file)
        - Best for local development
 
+    All credentials and Google API initialization are lazy-loaded,
+    meaning they only happen when the client is instantiated, not
+    when the module is imported.
+
     Usage:
         client = SheetsClient()
         client.append_next_steps(
@@ -104,6 +111,9 @@ class SheetsClient:
         """
         Initialize the Sheets client.
 
+        All credential loading and Google API initialization happens here,
+        not at module import time.
+
         Args:
             credentials_json: Service account credentials as JSON string (raw or base64).
                 If not provided, reads from GOOGLE_SHEETS_CREDENTIALS_JSON env var.
@@ -121,21 +131,23 @@ class SheetsClient:
             )
 
         # Try credentials JSON first (for cloud deployment)
-        self.credentials_json = credentials_json or os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
-        self.credentials_path = credentials_path or os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
+        creds_json = credentials_json or os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
+        creds_path = credentials_path or os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
 
-        if self.credentials_json:
+        if creds_json:
             logger.info("Using credentials from GOOGLE_SHEETS_CREDENTIALS_JSON")
-            self._credentials_info = _parse_credentials_json(self.credentials_json)
+            self._credentials_info = _parse_credentials_json(creds_json)
             self._auth_method = "json"
-        elif self.credentials_path:
-            if not os.path.exists(self.credentials_path):
+            self._credentials_path = None
+        elif creds_path:
+            if not os.path.exists(creds_path):
                 raise SheetsAuthenticationError(
-                    f"Credentials file not found: {self.credentials_path}"
+                    f"Credentials file not found: {creds_path}"
                 )
-            logger.info(f"Using credentials from file: {self.credentials_path}")
+            logger.info(f"Using credentials from file: {creds_path}")
             self._credentials_info = None
             self._auth_method = "file"
+            self._credentials_path = creds_path
         else:
             raise SheetsAuthenticationError(
                 "No credentials provided. Set either:\n"
@@ -143,10 +155,32 @@ class SheetsClient:
                 "  - GOOGLE_SHEETS_CREDENTIALS_PATH (for local development)"
             )
 
-        self.service = self._build_service()
+        self._service = None  # Lazy-loaded
+
+    @property
+    def service(self):
+        """Lazy-load the Google Sheets service."""
+        if self._service is None:
+            self._service = self._build_service()
+        return self._service
 
     def _build_service(self):
-        """Build the Google Sheets API service."""
+        """
+        Build the Google Sheets API service.
+
+        Google API libraries are imported here (lazy import) to ensure
+        they're only loaded when actually needed, not at module import time.
+        """
+        # Lazy import Google libraries - only when service is actually needed
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+        except ImportError as e:
+            raise SheetsClientError(
+                f"Google API libraries not installed: {e}. "
+                "Run: pip install google-api-python-client google-auth"
+            )
+
         try:
             if self._auth_method == "json":
                 credentials = service_account.Credentials.from_service_account_info(
@@ -155,7 +189,7 @@ class SheetsClient:
                 )
             else:
                 credentials = service_account.Credentials.from_service_account_file(
-                    self.credentials_path,
+                    self._credentials_path,
                     scopes=SCOPES,
                 )
 
@@ -190,6 +224,9 @@ class SheetsClient:
         Raises:
             SheetsAPIError: If the API call fails.
         """
+        # Lazy import for error handling
+        from googleapiclient.errors import HttpError
+
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
@@ -253,6 +290,8 @@ class SheetsClient:
         Returns:
             Dict with spreadsheet title and sheet names.
         """
+        from googleapiclient.errors import HttpError
+
         try:
             result = (
                 self.service.spreadsheets()
@@ -279,6 +318,8 @@ class SheetsClient:
         Args:
             sheet_name: Name of the sheet tab.
         """
+        from googleapiclient.errors import HttpError
+
         headers = [
             "Customer Name",
             "Call Date",
