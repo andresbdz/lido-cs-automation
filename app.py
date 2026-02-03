@@ -528,6 +528,20 @@ async def health_check():
     }
 
 
+@app.get("/debug/sheets")
+async def debug_sheets():
+    """Test Google Sheets client initialization."""
+    try:
+        client = SheetsClient()
+        return {"success": True, "message": "SheetsClient initialized"}
+    except SheetsAuthenticationError as e:
+        return {"success": False, "error_type": "auth", "error": str(e)}
+    except SheetsClientError as e:
+        return {"success": False, "error_type": "config", "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error_type": "unknown", "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/debug/anthropic")
 async def debug_anthropic():
     """Test Anthropic API connectivity."""
