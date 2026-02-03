@@ -528,6 +528,35 @@ async def health_check():
     }
 
 
+@app.get("/debug/anthropic")
+async def debug_anthropic():
+    """Test Anthropic API connectivity."""
+    import httpx
+
+    results = {"api_reachable": False, "dns_resolved": False, "error": None}
+
+    # Test DNS resolution
+    try:
+        import socket
+        ip = socket.gethostbyname("api.anthropic.com")
+        results["dns_resolved"] = True
+        results["resolved_ip"] = ip
+    except Exception as e:
+        results["error"] = f"DNS failed: {e}"
+        return results
+
+    # Test HTTPS connection
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get("https://api.anthropic.com/v1/messages")
+            results["api_reachable"] = True
+            results["status_code"] = resp.status_code
+    except Exception as e:
+        results["error"] = f"Connection failed: {type(e).__name__}: {e}"
+
+    return results
+
+
 @app.get("/processed")
 async def get_processed_recordings():
     """
