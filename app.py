@@ -531,15 +531,25 @@ async def health_check():
 @app.get("/debug/sheets")
 async def debug_sheets():
     """Test Google Sheets client initialization."""
+    creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
+    creds_path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
+    sheet_id = os.getenv("GOOGLE_SHEET_ID")
+
+    env_check = {
+        "GOOGLE_SHEETS_CREDENTIALS_JSON": f"{len(creds_json)} chars, starts with: {creds_json[:30]}..." if creds_json else "NOT SET",
+        "GOOGLE_SHEETS_CREDENTIALS_PATH": creds_path or "NOT SET",
+        "GOOGLE_SHEET_ID": sheet_id or "NOT SET",
+    }
+
     try:
         client = SheetsClient()
-        return {"success": True, "message": "SheetsClient initialized"}
+        return {"success": True, "message": "SheetsClient initialized", "env": env_check}
     except SheetsAuthenticationError as e:
-        return {"success": False, "error_type": "auth", "error": str(e)}
+        return {"success": False, "error_type": "auth", "error": str(e), "env": env_check}
     except SheetsClientError as e:
-        return {"success": False, "error_type": "config", "error": str(e)}
+        return {"success": False, "error_type": "config", "error": str(e), "env": env_check}
     except Exception as e:
-        return {"success": False, "error_type": "unknown", "error": f"{type(e).__name__}: {e}"}
+        return {"success": False, "error_type": "unknown", "error": f"{type(e).__name__}: {e}", "env": env_check}
 
 
 @app.get("/debug/anthropic")
