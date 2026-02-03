@@ -170,21 +170,59 @@ def extract_customer_name(title: str, transcript_text: Optional[str] = None) -> 
 # Global service instances (initialized on startup)
 tldv_client: Optional[TldvClient] = None
 transcript_analyzer: Optional[TranscriptAnalyzer] = None
-sheets_client: Optional[SheetsClient] = None
+# SheetsClient is initialized lazily when needed
+_sheets_client: Optional[SheetsClient] = None
+_sheets_client_initialized: bool = False
+
+
+def get_sheets_client() -> Optional[SheetsClient]:
+    """
+    Get or lazily initialize the SheetsClient.
+
+    This allows the app to start without Google Sheets credentials
+    and only fail when Sheets functionality is actually needed.
+    """
+    global _sheets_client, _sheets_client_initialized
+
+    if _sheets_client_initialized:
+        return _sheets_client
+
+    _sheets_client_initialized = True
+
+    try:
+        _sheets_client = SheetsClient()
+        logger.info("SheetsClient initialized successfully (lazy)")
+        return _sheets_client
+    except SheetsAuthenticationError as e:
+        logger.warning(f"SheetsClient not available (credentials missing): {e}")
+        return None
+    except SheetsClientError as e:
+        logger.warning(f"SheetsClient not available (config missing): {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to initialize SheetsClient: {e}")
+        return None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize services on startup."""
-    global tldv_client, transcript_analyzer, sheets_client
+    global tldv_client, transcript_analyzer
 
     logger.info("Initializing services...")
 
     # Log masked API keys for debugging (never log full keys)
     logger.info(f"TLDV_API_KEY: {_mask_key(os.getenv('TLDV_API_KEY'))}")
     logger.info(f"ANTHROPIC_API_KEY: {_mask_key(os.getenv('ANTHROPIC_API_KEY'))}")
-    logger.info(f"GOOGLE_SHEET_ID: {os.getenv('GOOGLE_SHEET_ID', 'NOT_SET')[:20]}...")
-    logger.info(f"GOOGLE_SHEETS_CREDENTIALS_PATH: {os.getenv('GOOGLE_SHEETS_CREDENTIALS_PATH', 'NOT_SET')}")
+    logger.info(f"GOOGLE_SHEET_ID: {os.getenv('GOOGLE_SHEET_ID', 'NOT_SET')[:20] if os.getenv('GOOGLE_SHEET_ID') else 'NOT_SET'}...")
+
+    # Log which credentials method will be used (without accessing the actual values)
+    if os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON"):
+        logger.info("GOOGLE_SHEETS_CREDENTIALS_JSON: configured (will use JSON credentials)")
+    elif os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH"):
+        logger.info(f"GOOGLE_SHEETS_CREDENTIALS_PATH: {os.getenv('GOOGLE_SHEETS_CREDENTIALS_PATH')}")
+    else:
+        logger.info("Google Sheets credentials: NOT_SET (Sheets integration disabled)")
 
     # Initialize tldv client
     try:
@@ -202,16 +240,9 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize TranscriptAnalyzer: {e}")
         transcript_analyzer = None
 
-    # Initialize sheets client
-    try:
-        sheets_client = SheetsClient()
-        logger.info("SheetsClient initialized successfully")
-    except SheetsAuthenticationError as e:
-        logger.warning(f"SheetsClient not initialized (credentials missing): {e}")
-        sheets_client = None
-    except Exception as e:
-        logger.error(f"Failed to initialize SheetsClient: {e}")
-        sheets_client = None
+    # Note: SheetsClient is initialized lazily when first needed
+    # This allows the app to start without Google Sheets credentials
+    logger.info("SheetsClient will be initialized lazily when needed")
 
     # Log processed recordings count
     processed = load_processed_recordings()
@@ -425,21 +456,23 @@ def process_recording(recording_id: str) -> ProcessingResult:
 
     # Write to Google Sheets
     sheets_updated = False
-    if next_steps and sheets_client:
-        try:
-            logger.info("Writing next steps to Google Sheets...")
-            sheets_client.append_next_steps(
-                customer_name=customer_name,
-                call_date=call_date,
-                next_steps=next_steps.get("next_steps", ""),
-                due_date=next_steps.get("due_date", ""),
-            )
-            sheets_updated = True
-            logger.info("Successfully updated Google Sheets")
-        except SheetsClientError as e:
-            logger.error(f"Failed to update Google Sheets: {e}")
-    elif not sheets_client:
-        logger.warning("SheetsClient not available - skipping Sheets update")
+    if next_steps:
+        client = get_sheets_client()
+        if client:
+            try:
+                logger.info("Writing next steps to Google Sheets...")
+                client.append_next_steps(
+                    customer_name=customer_name,
+                    call_date=call_date,
+                    next_steps=next_steps.get("next_steps", ""),
+                    due_date=next_steps.get("due_date", ""),
+                )
+                sheets_updated = True
+                logger.info("Successfully updated Google Sheets")
+            except SheetsClientError as e:
+                logger.error(f"Failed to update Google Sheets: {e}")
+        else:
+            logger.warning("SheetsClient not available - skipping Sheets update")
 
     # Write to knowledge base
     kb_updated = False
@@ -482,12 +515,14 @@ async def health_check():
     Returns service status and readiness.
     """
     processed = load_processed_recordings()
+    # Check sheets client status without initializing it if not yet used
+    sheets_status = "ready" if _sheets_client else ("not_configured" if _sheets_client_initialized else "pending_initialization")
     return {
         "status": "healthy",
         "services": {
             "tldv_client": "ready" if tldv_client else "not_initialized",
             "transcript_analyzer": "ready" if transcript_analyzer else "not_initialized",
-            "sheets_client": "ready" if sheets_client else "not_initialized",
+            "sheets_client": sheets_status,
         },
         "processed_recordings_count": len(processed.get("recordings", {})),
     }
@@ -735,10 +770,11 @@ async def test_mock_endpoint():
 
     # Test Sheets integration
     sheets_updated = False
-    if sheets_client:
+    client = get_sheets_client()
+    if client:
         try:
             logger.info("Testing Google Sheets integration...")
-            sheets_client.append_next_steps(
+            client.append_next_steps(
                 customer_name=customer_name,
                 call_date=call_date,
                 next_steps=mock_next_steps["next_steps"],
