@@ -531,6 +531,9 @@ async def health_check():
 @app.get("/debug/sheets")
 async def debug_sheets():
     """Test Google Sheets client initialization."""
+    # List all GOOGLE* env vars the app can see
+    google_vars = {k: f"{len(v)} chars" if len(v) > 50 else v for k, v in os.environ.items() if "GOOGLE" in k.upper()}
+
     creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON")
     creds_path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
@@ -539,6 +542,7 @@ async def debug_sheets():
         "GOOGLE_SHEETS_CREDENTIALS_JSON": f"{len(creds_json)} chars, starts with: {creds_json[:30]}..." if creds_json else "NOT SET",
         "GOOGLE_SHEETS_CREDENTIALS_PATH": creds_path or "NOT SET",
         "GOOGLE_SHEET_ID": sheet_id or "NOT SET",
+        "all_google_vars": google_vars,
     }
 
     try:
