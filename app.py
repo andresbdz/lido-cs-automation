@@ -557,6 +557,29 @@ async def debug_anthropic():
     return results
 
 
+@app.get("/debug/anthropic-sdk")
+async def debug_anthropic_sdk():
+    """Test Anthropic SDK with a minimal API call."""
+    import anthropic
+
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=10,
+            messages=[{"role": "user", "content": "Say 'ok'"}],
+        )
+        return {
+            "success": True,
+            "response": response.content[0].text,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
 @app.get("/processed")
 async def get_processed_recordings():
     """
