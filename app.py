@@ -394,8 +394,16 @@ def process_recording(recording_id: str) -> ProcessingResult:
             error=f"tldv API error: {e.message}",
         )
 
-    # Extract customer name from title
-    customer_name = extract_customer_name(recording.name)
+    # Extract customer name: use first non-@trylido.com attendee email, fall back to title
+    customer_name = None
+    if recording.invitees:
+        for invitee in recording.invitees:
+            email = invitee.get("email", "") if isinstance(invitee, dict) else ""
+            if email and not email.endswith("@trylido.com"):
+                customer_name = email
+                break
+    if not customer_name:
+        customer_name = extract_customer_name(recording.name)
     logger.info(f"Extracted customer name: {customer_name}")
 
     # Check if recording should be processed
