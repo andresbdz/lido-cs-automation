@@ -482,20 +482,25 @@ def process_recording(recording_id: str) -> ProcessingResult:
         else:
             logger.warning("SheetsClient not available - skipping Sheets update")
 
-    # Write to knowledge base
+    # Write Q&A pairs to Google Sheets "Knowledge Base" tab
     kb_updated = False
     if qa_pairs:
-        try:
-            logger.info("Writing Q&A pairs to knowledge base...")
-            append_qa_pairs(
-                qa_pairs=qa_pairs,
-                call_title=recording.name,
-                call_date=call_date,
-            )
-            kb_updated = True
-            logger.info("Successfully updated knowledge base")
-        except KnowledgeBaseError as e:
-            logger.error(f"Failed to update knowledge base: {e}")
+        client = get_sheets_client()
+        if client:
+            try:
+                logger.info("Writing Q&A pairs to Knowledge Base sheet...")
+                client.append_qa_pairs(
+                    qa_pairs=qa_pairs,
+                    call_title=recording.name,
+                    call_date=call_date,
+                    customer_name=customer_name,
+                )
+                kb_updated = True
+                logger.info("Successfully updated Knowledge Base sheet")
+            except SheetsClientError as e:
+                logger.error(f"Failed to update Knowledge Base sheet: {e}")
+        else:
+            logger.warning("SheetsClient not available - skipping KB update")
 
     logger.info(f"Successfully processed recording: {recording_id}")
 

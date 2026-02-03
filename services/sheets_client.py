@@ -283,6 +283,111 @@ class SheetsClient:
             logger.error(f"Unexpected error appending to sheet: {e}")
             raise SheetsAPIError(f"Failed to append data: {e}")
 
+    def append_qa_pairs(
+        self,
+        qa_pairs: list[dict],
+        call_title: str,
+        call_date: str,
+        customer_name: str = "",
+        sheet_name: str = "Knowledge Base",
+    ) -> dict:
+        """
+        Append Q&A pairs to a Knowledge Base sheet tab.
+
+        Args:
+            qa_pairs: List of dicts with 'question', 'answer', 'topic' keys.
+            call_title: Title of the meeting/call.
+            call_date: Date of the call (YYYY-MM-DD format).
+            customer_name: Customer name or email.
+            sheet_name: Name of the sheet tab (default: "Knowledge Base").
+
+        Returns:
+            API response dict with update details.
+
+        Raises:
+            SheetsAPIError: If the API call fails.
+        """
+        from googleapiclient.errors import HttpError
+
+        logger.info(f"Appending {len(qa_pairs)} Q&A pairs for {call_title}")
+
+        # Ensure headers exist on the Knowledge Base tab
+        headers = ["Date", "Customer", "Meeting", "Topic", "Question", "Answer"]
+        header_range = f"{sheet_name}!A1:F1"
+        try:
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .get(spreadsheetId=self.sheet_id, range=header_range)
+                .execute()
+            )
+            existing = result.get("values", [[]])[0] if result.get("values") else []
+            if existing != headers:
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.sheet_id,
+                    range=header_range,
+                    valueInputOption="RAW",
+                    body={"values": [headers]},
+                ).execute()
+                logger.info("Knowledge Base headers updated")
+        except HttpError as e:
+            if e.resp.status == 400:
+                # Tab might not exist -- that's ok, append will create it
+                logger.warning(f"Could not check headers for '{sheet_name}': {e}")
+            else:
+                raise SheetsAPIError(f"Failed to ensure KB headers: {e}")
+
+        # Build rows
+        rows = []
+        for qa in qa_pairs:
+            rows.append([
+                call_date,
+                customer_name,
+                call_title,
+                qa.get("topic", ""),
+                qa.get("question", ""),
+                qa.get("answer", ""),
+            ])
+
+        range_name = f"{sheet_name}!A:F"
+        body = {"values": rows}
+
+        try:
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .append(
+                    spreadsheetId=self.sheet_id,
+                    range=range_name,
+                    valueInputOption="USER_ENTERED",
+                    insertDataOption="INSERT_ROWS",
+                    body=body,
+                )
+                .execute()
+            )
+
+            updated_range = result.get("updates", {}).get("updatedRange", "unknown")
+            logger.info(f"Successfully appended {len(rows)} Q&A rows to {updated_range}")
+            return result
+
+        except HttpError as e:
+            error_message = str(e)
+            logger.error(f"Google Sheets API error (KB): {error_message}")
+            if e.resp.status == 403:
+                raise SheetsAuthenticationError(
+                    "Permission denied. Ensure the service account has edit access."
+                )
+            elif e.resp.status == 404:
+                raise SheetsAPIError(
+                    f"Sheet not found: {self.sheet_id}. Check the GOOGLE_SHEET_ID value."
+                )
+            else:
+                raise SheetsAPIError(f"API error: {error_message}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error appending Q&A pairs: {e}")
+            raise SheetsAPIError(f"Failed to append Q&A data: {e}")
+
     def get_sheet_info(self) -> dict:
         """
         Get information about the spreadsheet.
