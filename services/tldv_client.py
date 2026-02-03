@@ -625,6 +625,8 @@ def should_process_recording(title: str) -> bool:
     A recording should be processed if the title contains:
     - "customer success" (case insensitive)
     - Any variation of "check-in" (check-in, checkin, check in)
+    - "weekly" (case insensitive)
+    - "monthly" (case insensitive)
 
     Args:
         title: The recording/meeting title.
@@ -644,9 +646,18 @@ def should_process_recording(title: str) -> bool:
 
     # Check for variations of "check-in"
     # Matches: check-in, checkin, check in, Check-In, etc.
-    checkin_pattern = r"check[-\s]?in"
+    checkin_pattern = r"check[-\s]?in\b"
     if re.search(checkin_pattern, title_lower):
         logger.debug(f"Recording matches 'check-in' pattern: {title}")
+        return True
+
+    # Check for "weekly" or "monthly"
+    if "weekly" in title_lower:
+        logger.debug(f"Recording matches 'weekly': {title}")
+        return True
+
+    if "monthly" in title_lower:
+        logger.debug(f"Recording matches 'monthly': {title}")
         return True
 
     return False

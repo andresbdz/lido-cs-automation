@@ -21,6 +21,18 @@ class TestShouldProcessRecording:
         assert should_process_recording("Check-In with client") is True
         assert should_process_recording("Q4 CHECK-IN") is True
 
+    def test_matches_weekly(self):
+        """Should match titles containing 'weekly'."""
+        assert should_process_recording("Disney Trucking and Lido Weekly") is True
+        assert should_process_recording("Weekly sync") is True
+        assert should_process_recording("WEEKLY review") is True
+
+    def test_matches_monthly(self):
+        """Should match titles containing 'monthly'."""
+        assert should_process_recording("Monthly business review") is True
+        assert should_process_recording("Acme Corp monthly") is True
+        assert should_process_recording("MONTHLY sync") is True
+
     def test_no_match(self):
         """Should not match unrelated titles."""
         assert should_process_recording("Engineering standup") is False
