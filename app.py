@@ -561,7 +561,35 @@ async def debug_anthropic():
 async def debug_anthropic_sdk():
     """Test Anthropic SDK with a minimal API call."""
     import anthropic
+    import httpx
 
+    results = {}
+
+    # Test 1: Raw httpx POST (sync, like SDK uses)
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": os.getenv("ANTHROPIC_API_KEY"),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-5-20250929",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "Say ok"}],
+                },
+            )
+            results["httpx_sync"] = {"success": True, "status": resp.status_code}
+            if resp.status_code == 200:
+                results["httpx_sync"]["response"] = resp.json().get("content", [{}])[0].get("text", "")
+            else:
+                results["httpx_sync"]["body"] = resp.text[:200]
+    except Exception as e:
+        results["httpx_sync"] = {"success": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Test 2: Anthropic SDK
     try:
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         response = client.messages.create(
@@ -569,15 +597,11 @@ async def debug_anthropic_sdk():
             max_tokens=10,
             messages=[{"role": "user", "content": "Say 'ok'"}],
         )
-        return {
-            "success": True,
-            "response": response.content[0].text,
-        }
+        results["sdk"] = {"success": True, "response": response.content[0].text}
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"{type(e).__name__}: {e}",
-        }
+        results["sdk"] = {"success": False, "error": f"{type(e).__name__}: {e}"}
+
+    return results
 
 
 @app.get("/processed")
