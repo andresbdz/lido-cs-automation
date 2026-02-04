@@ -618,46 +618,57 @@ class TldvClient:
             return []
 
 
+def classify_recording(title: str) -> str:
+    """
+    Classify a recording based on its title.
+
+    Returns:
+        "cs" if the title matches CS keywords (customer success, check-in, weekly, monthly).
+        "skip" if the title contains "internal".
+        "sales" for everything else.
+    """
+    if not title:
+        return "skip"
+
+    title_lower = title.lower()
+
+    # 1. Check for CS keywords
+    if "customer success" in title_lower:
+        logger.debug(f"Recording classified as CS (customer success): {title}")
+        return "cs"
+
+    checkin_pattern = r"check[-\s]?in\b"
+    if re.search(checkin_pattern, title_lower):
+        logger.debug(f"Recording classified as CS (check-in): {title}")
+        return "cs"
+
+    if "weekly" in title_lower:
+        logger.debug(f"Recording classified as CS (weekly): {title}")
+        return "cs"
+
+    if "monthly" in title_lower:
+        logger.debug(f"Recording classified as CS (monthly): {title}")
+        return "cs"
+
+    # 2. Check for internal / standup
+    if "internal" in title_lower:
+        logger.debug(f"Recording classified as skip (internal): {title}")
+        return "skip"
+
+    if re.search(r"stand[-\s]?up\b", title_lower):
+        logger.debug(f"Recording classified as skip (standup): {title}")
+        return "skip"
+
+    # 3. Default to sales
+    logger.debug(f"Recording classified as sales: {title}")
+    return "sales"
+
+
 def should_process_recording(title: str) -> bool:
     """
     Determine if a recording should be processed based on its title.
 
-    A recording should be processed if the title contains:
-    - "customer success" (case insensitive)
-    - Any variation of "check-in" (check-in, checkin, check in)
-    - "weekly" (case insensitive)
-    - "monthly" (case insensitive)
-
-    Args:
-        title: The recording/meeting title.
-
-    Returns:
-        True if the recording should be processed, False otherwise.
+    Thin wrapper around classify_recording() for backward compatibility.
+    Returns True for "cs" or "sales", False for "skip".
     """
-    if not title:
-        return False
-
-    title_lower = title.lower()
-
-    # Check for "customer success"
-    if "customer success" in title_lower:
-        logger.debug(f"Recording matches 'customer success': {title}")
-        return True
-
-    # Check for variations of "check-in"
-    # Matches: check-in, checkin, check in, Check-In, etc.
-    checkin_pattern = r"check[-\s]?in\b"
-    if re.search(checkin_pattern, title_lower):
-        logger.debug(f"Recording matches 'check-in' pattern: {title}")
-        return True
-
-    # Check for "weekly" or "monthly"
-    if "weekly" in title_lower:
-        logger.debug(f"Recording matches 'weekly': {title}")
-        return True
-
-    if "monthly" in title_lower:
-        logger.debug(f"Recording matches 'monthly': {title}")
-        return True
-
-    return False
+    return classify_recording(title) != "skip"

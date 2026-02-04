@@ -32,6 +32,7 @@ from services import (
     SheetsAuthenticationError,
     append_qa_pairs,
     KnowledgeBaseError,
+    classify_recording,
     should_process_recording,
 )
 
@@ -550,9 +551,10 @@ def process_recording(recording_id: str) -> ProcessingResult:
         customer_name = extract_customer_name(recording.name)
     logger.info(f"Extracted customer name: {customer_name}")
 
-    # Check if recording should be processed
-    if not should_process_recording(recording.name):
-        logger.info(f"Skipping recording (title doesn't match criteria): '{recording.name}'")
+    # Classify the recording
+    recording_type = classify_recording(recording.name)
+    if recording_type == "skip":
+        logger.info(f"Skipping recording (internal): '{recording.name}'")
         return ProcessingResult(
             recording_id=recording_id,
             title=recording.name,
@@ -560,6 +562,16 @@ def process_recording(recording_id: str) -> ProcessingResult:
             processed=False,
             error="Recording title doesn't match processing criteria",
         )
+
+    # Determine target sheets based on classification
+    if recording_type == "cs":
+        next_steps_sheet = "Sheet1"
+        kb_sheet = "Knowledge Base"
+    else:  # sales
+        next_steps_sheet = "Sheet2"
+        kb_sheet = "Sales Knowledge Base"
+
+    logger.info(f"Recording classified as '{recording_type}' -> sheets: {next_steps_sheet}, {kb_sheet}")
 
     # Check if transcript is available
     if not recording.transcript:
@@ -612,12 +624,13 @@ def process_recording(recording_id: str) -> ProcessingResult:
         client = get_sheets_client()
         if client:
             try:
-                logger.info("Writing next steps to Google Sheets...")
+                logger.info(f"Writing next steps to Google Sheets ({next_steps_sheet})...")
                 client.append_next_steps(
                     customer_name=customer_name,
                     call_date=call_date,
                     next_steps=next_steps.get("next_steps", ""),
                     due_date=next_steps.get("due_date", ""),
+                    sheet_name=next_steps_sheet,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
@@ -626,23 +639,24 @@ def process_recording(recording_id: str) -> ProcessingResult:
         else:
             logger.warning("SheetsClient not available - skipping Sheets update")
 
-    # Write Q&A pairs to Google Sheets "Knowledge Base" tab
+    # Write Q&A pairs to the appropriate Knowledge Base tab
     kb_updated = False
     if qa_pairs:
         client = get_sheets_client()
         if client:
             try:
-                logger.info("Writing Q&A pairs to Knowledge Base sheet...")
+                logger.info(f"Writing Q&A pairs to {kb_sheet} sheet...")
                 client.append_qa_pairs(
                     qa_pairs=qa_pairs,
                     call_title=recording.name,
                     call_date=call_date,
                     customer_name=customer_name,
+                    sheet_name=kb_sheet,
                 )
                 kb_updated = True
-                logger.info("Successfully updated Knowledge Base sheet")
+                logger.info(f"Successfully updated {kb_sheet} sheet")
             except SheetsClientError as e:
-                logger.error(f"Failed to update Knowledge Base sheet: {e}")
+                logger.error(f"Failed to update {kb_sheet} sheet: {e}")
         else:
             logger.warning("SheetsClient not available - skipping KB update")
 

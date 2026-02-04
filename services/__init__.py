@@ -11,6 +11,7 @@ from .tldv_client import (
     Recording,
     TranscriptSegment,
     Speaker,
+    classify_recording,
     should_process_recording,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "Recording",
     "TranscriptSegment",
     "Speaker",
+    "classify_recording",
     "should_process_recording",
     # transcript analyzer
     "TranscriptAnalyzer",
