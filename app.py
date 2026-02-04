@@ -4,13 +4,14 @@ Lido CS Automation - FastAPI webhook receiver for tldv.io meeting transcripts.
 Processes customer success call recordings and extracts actionable insights.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,11 @@ logger = logging.getLogger(__name__)
 # Path to tracking file for processed recordings
 PROCESSED_RECORDINGS_FILE = Path(__file__).parent / "processed_recordings.json"
 _tracking_lock = threading.Lock()
+
+# Polling configuration (overridable via environment variables)
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "900"))
+POLL_LOOKBACK_HOURS = int(os.getenv("POLL_LOOKBACK_HOURS", "24"))
+POLL_ENABLED = os.getenv("POLL_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 # ============================================================================
@@ -173,6 +179,7 @@ transcript_analyzer: Optional[TranscriptAnalyzer] = None
 # SheetsClient is initialized lazily when needed
 _sheets_client: Optional[SheetsClient] = None
 _sheets_client_initialized: bool = False
+_poll_task: Optional[asyncio.Task] = None
 
 
 def get_sheets_client() -> Optional[SheetsClient]:
@@ -204,10 +211,124 @@ def get_sheets_client() -> Optional[SheetsClient]:
         return None
 
 
+# ============================================================================
+# Polling Fallback
+# ============================================================================
+
+
+async def poll_for_recordings() -> None:
+    """
+    Background coroutine that periodically polls the tldv API for recent
+    recordings and processes any that were missed by the webhook.
+    """
+    logger.info(
+        f"Polling started: interval={POLL_INTERVAL_SECONDS}s, "
+        f"lookback={POLL_LOOKBACK_HOURS}h"
+    )
+
+    # Brief initial delay to let the app finish starting up and to avoid
+    # duplicating work if a webhook arrives at the same time.
+    await asyncio.sleep(60)
+
+    while True:
+        try:
+            await _poll_once()
+        except asyncio.CancelledError:
+            logger.info("Polling task cancelled -- shutting down")
+            raise
+        except Exception:
+            logger.exception("Unexpected error in polling loop -- will retry next cycle")
+
+        try:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            logger.info("Polling task cancelled during sleep -- shutting down")
+            raise
+
+
+async def _poll_once() -> None:
+    """Execute a single poll cycle: list recent recordings and process any unprocessed ones."""
+    if not tldv_client:
+        logger.warning("Poll skipped: TldvClient not initialized")
+        return
+
+    from_date = (
+        datetime.now(timezone.utc) - timedelta(hours=POLL_LOOKBACK_HOURS)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    logger.info(f"Polling tldv for recordings since {from_date}")
+
+    try:
+        recordings = await asyncio.to_thread(
+            tldv_client.list_recordings,
+            limit=50,
+            from_date=from_date,
+        )
+    except Exception:
+        logger.exception("Failed to list recordings from tldv API")
+        return
+
+    logger.info(f"Poll returned {len(recordings)} recordings")
+
+    processed_count = 0
+    skipped_count = 0
+
+    for rec in recordings:
+        rec_id = rec.get("id")
+        rec_name = rec.get("name", "Unknown")
+
+        if not rec_id:
+            continue
+
+        if is_already_processed(rec_id):
+            skipped_count += 1
+            continue
+
+        logger.info(f"Poll found unprocessed recording: '{rec_name}' ({rec_id})")
+
+        try:
+            result = await asyncio.to_thread(process_recording, rec_id)
+        except Exception:
+            logger.exception(f"Error processing recording {rec_id} via poll")
+            continue
+
+        if result.processed:
+            mark_as_processed(
+                recording_id=rec_id,
+                title=result.title,
+                result=result.model_dump(),
+            )
+            processed_count += 1
+            logger.info(f"Poll: successfully processed '{result.title}' ({rec_id})")
+        else:
+            # Mark non-transient failures (title filter, no transcript) as processed
+            # so they aren't retried every cycle. Leave transient errors for retry.
+            error_msg = (result.error or "").lower()
+            is_transient = any(
+                phrase in error_msg
+                for phrase in ["api error", "authentication", "not initialized"]
+            )
+            if not is_transient:
+                mark_as_processed(
+                    recording_id=rec_id,
+                    title=result.title,
+                    result=result.model_dump(),
+                )
+            logger.info(
+                f"Poll: recording '{rec_name}' ({rec_id}) not processed: {result.error}"
+            )
+
+    logger.info(
+        f"Poll cycle complete: {processed_count} processed, "
+        f"{skipped_count} already processed, "
+        f"{len(recordings) - processed_count - skipped_count} skipped/filtered"
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize services on startup."""
-    global tldv_client, transcript_analyzer
+    global tldv_client, transcript_analyzer, _poll_task
 
     logger.info("Initializing services...")
 
@@ -248,7 +369,29 @@ async def lifespan(app: FastAPI):
     processed = load_processed_recordings()
     logger.info(f"Loaded {len(processed.get('recordings', {}))} previously processed recordings")
 
+    # Start polling background task
+    if POLL_ENABLED and tldv_client:
+        _poll_task = asyncio.create_task(poll_for_recordings())
+        logger.info(
+            f"Polling fallback enabled: checking every {POLL_INTERVAL_SECONDS}s "
+            f"with {POLL_LOOKBACK_HOURS}h lookback"
+        )
+    elif not POLL_ENABLED:
+        logger.info("Polling fallback disabled (POLL_ENABLED=false)")
+    else:
+        logger.warning("Polling fallback not started: TldvClient not available")
+
     yield
+
+    # Shutdown: cancel polling task
+    if _poll_task is not None:
+        logger.info("Cancelling polling task...")
+        _poll_task.cancel()
+        try:
+            await _poll_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Polling task stopped")
 
     logger.info("Shutting down services...")
 
@@ -530,12 +673,28 @@ async def health_check():
     processed = load_processed_recordings()
     # Check sheets client status without initializing it if not yet used
     sheets_status = "ready" if _sheets_client else ("not_configured" if _sheets_client_initialized else "pending_initialization")
+
+    if not POLL_ENABLED:
+        poll_status = "disabled"
+    elif _poll_task is not None and not _poll_task.done():
+        poll_status = "running"
+    elif _poll_task is not None and _poll_task.done():
+        poll_status = "stopped"
+    else:
+        poll_status = "not_started"
+
     return {
         "status": "healthy",
         "services": {
             "tldv_client": "ready" if tldv_client else "not_initialized",
             "transcript_analyzer": "ready" if transcript_analyzer else "not_initialized",
             "sheets_client": sheets_status,
+            "poller": poll_status,
+        },
+        "polling_config": {
+            "enabled": POLL_ENABLED,
+            "interval_seconds": POLL_INTERVAL_SECONDS,
+            "lookback_hours": POLL_LOOKBACK_HOURS,
         },
         "processed_recordings_count": len(processed.get("recordings", {})),
     }
