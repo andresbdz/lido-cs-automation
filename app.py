@@ -46,7 +46,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Path to tracking file for processed recordings
-PROCESSED_RECORDINGS_FILE = Path(__file__).parent / "processed_recordings.json"
+# Use DATA_DIR env var (set to a Railway volume mount) to persist across deploys
+PROCESSED_RECORDINGS_FILE = Path(os.getenv("DATA_DIR", str(Path(__file__).parent))) / "processed_recordings.json"
 _tracking_lock = threading.Lock()
 
 # Polling configuration (overridable via environment variables)
