@@ -618,6 +618,21 @@ def process_recording(recording_id: str) -> ProcessingResult:
     except TranscriptAnalyzerError as e:
         logger.error(f"Failed to extract Q&A pairs: {e}")
 
+    # Generate sales follow-up email (for sales recordings only)
+    follow_up_email = ""
+    if recording_type == "sales":
+        try:
+            logger.info("Generating sales follow-up email...")
+            follow_up_email = transcript_analyzer.generate_sales_follow_up_email(
+                transcript=transcript_text,
+                customer_name=customer_name,
+                recording_link=recording.recording_link or "",
+                call_date=call_date,
+            )
+            logger.info("Sales follow-up email generated successfully")
+        except TranscriptAnalyzerError as e:
+            logger.error(f"Failed to generate sales follow-up email: {e}")
+
     # Write to Google Sheets
     sheets_updated = False
     if next_steps:
@@ -632,6 +647,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     due_date=next_steps.get("due_date", ""),
                     sheet_name=next_steps_sheet,
                     recording_link=recording.recording_link or "",
+                    follow_up_email=follow_up_email,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
@@ -1066,12 +1082,32 @@ async def test_mock_endpoint():
     if client:
         try:
             logger.info("Testing Google Sheets integration...")
+            mock_follow_up_email = """Hey John, great chatting with you!
+
+As we saw on the call, you can expect 100% accuracy on these documents.
+
+**Quick recap**
+- Lido will automate your invoice processing workflow, eliminating manual data entry from PDFs to your ERP system.
+- Pricing overview: https://docs.google.com/spreadsheets/d/1YojYeoDdSFSf7FeWXUFeoe1pW8BElGXCAfwDQxsVWGw/edit?gid=1761872706#gid=1761872706
+- Call recording: https://tldv.io/app/meetings/mock-recording-123
+
+Based on estimated volume of 10,000 pages processed per year, you'd land in Business. Enterprise plans include priority support and a dedicated client success manager if needed.
+
+**ROI (based on our conservative estimates)**
+- ~10,000 documents / year
+- ~2 minutes / document = ~333 hours / year
+- At $30 / hour, that's $10,000 / year of staff time that can be redeployed for higher value work. Net of Lido, that's $8,560 / year in recovered capacity.
+
+**Next steps**
+What most people typically like to do at this stage is set up a follow-up call to cover next steps and go through a few more tests together. In the meantime, I can send you the contract to execute to get ahead."""
+
             client.append_next_steps(
                 customer_name=customer_name,
                 call_date=call_date,
                 next_steps=mock_next_steps["next_steps"],
                 due_date=mock_next_steps["due_date"],
                 recording_link="https://tldv.io/app/meetings/mock-recording-123",
+                follow_up_email=mock_follow_up_email,
             )
             sheets_updated = True
             logger.info("Successfully wrote to Google Sheets")

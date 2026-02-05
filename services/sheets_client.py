@@ -208,6 +208,7 @@ class SheetsClient:
         due_date: str,
         sheet_name: str = "Sheet1",
         recording_link: str = "",
+        follow_up_email: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -219,6 +220,7 @@ class SheetsClient:
             due_date: Due date for follow-up (YYYY-MM-DD format).
             sheet_name: Name of the sheet tab (default: "Sheet1").
             recording_link: URL to the tldv recording.
+            follow_up_email: Generated sales follow-up email (for sales calls).
 
         Returns:
             API response dict with update details.
@@ -232,7 +234,7 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link
+        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email
         row_data = [
             customer_name,
             call_date,
@@ -240,10 +242,11 @@ class SheetsClient:
             due_date,
             "No",  # Default: not completed
             recording_link,
+            follow_up_email,
         ]
 
         # Build the request
-        range_name = f"{sheet_name}!A:F"
+        range_name = f"{sheet_name}!A:G"
         body = {
             "values": [row_data],
         }
@@ -435,9 +438,10 @@ class SheetsClient:
             "Due Date",
             "Completed?",
             "Recording Link",
+            "Follow-up Email",
         ]
 
-        range_name = f"{sheet_name}!A1:F1"
+        range_name = f"{sheet_name}!A1:G1"
         body = {"values": [headers]}
 
         try:

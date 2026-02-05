@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -319,3 +320,160 @@ TRANSCRIPT:
 Provide the summary directly, no JSON formatting needed."""
 
         return self._call_api_with_retry(system_prompt, user_prompt, temperature=0.3)
+
+    def _load_sales_context(self) -> str:
+        """Load sales context from prompts/lido_sales_context.md."""
+        context_path = Path(__file__).parent.parent / "prompts" / "lido_sales_context.md"
+        if context_path.exists():
+            return context_path.read_text(encoding="utf-8")
+        logger.warning(f"Sales context file not found: {context_path}")
+        return ""
+
+    def _get_pricing_tier(self, pages_per_year: int) -> dict:
+        """
+        Determine the appropriate Lido pricing tier based on annual page volume.
+
+        Returns dict with package name, pages limit, annual cost, and whether it's enterprise.
+        """
+        tiers = [
+            {"package": "Starter", "pages": 1200, "cost": 348, "enterprise": False},
+            {"package": "Professional", "pages": 6000, "cost": 1428, "enterprise": False},
+            {"package": "Business", "pages": 12000, "cost": 2388, "enterprise": False},
+            {"package": "Scale", "pages": 42000, "cost": 7000, "enterprise": False},
+            {"package": "Scale+", "pages": 72000, "cost": 9000, "enterprise": False},
+            {"package": "Level 1 Enterprise", "pages": 120000, "cost": 12600, "enterprise": True},
+            {"package": "Level 2 Enterprise", "pages": 180000, "cost": 17500, "enterprise": True},
+            {"package": "Level 3 Enterprise", "pages": 240000, "cost": 21000, "enterprise": True},
+            {"package": "Level 4 Enterprise", "pages": 360000, "cost": 28000, "enterprise": True},
+        ]
+
+        for tier in tiers:
+            if pages_per_year <= tier["pages"]:
+                return tier
+
+        # Above all tiers - return Level 4 Enterprise with note about custom pricing
+        return {"package": "Level 4 Enterprise (custom)", "pages": pages_per_year, "cost": 28000, "enterprise": True}
+
+    def generate_sales_follow_up_email(
+        self,
+        transcript: str,
+        customer_name: str,
+        recording_link: str = "",
+        call_date: str = "",
+    ) -> str:
+        """
+        Generate a sales follow-up email based on the call transcript.
+
+        The email follows the template structure:
+        1. Opening - warm greeting with confidence statement
+        2. Quick Recap - key takeaway, pricing link, recording link, package recommendation
+        3. ROI - volume, time savings, dollar savings calculation
+        4. Next Steps - conditional based on urgency
+
+        Args:
+            transcript: Full call transcript text.
+            customer_name: Company or prospect name.
+            recording_link: URL to the tldv recording.
+            call_date: Date of the call (for context).
+
+        Returns:
+            Formatted follow-up email as a string.
+        """
+        logger.info(f"Generating sales follow-up email for {customer_name}")
+
+        # Load context for the prompt
+        sales_context = self._load_sales_context()
+
+        # Step 1: Extract key details from transcript using Claude
+        system_prompt = """You are an expert sales professional analyzing sales call transcripts.
+
+Extract key details from the transcript accurately. Output valid JSON only."""
+
+        user_prompt = f"""Analyze this sales call transcript and extract the following details.
+
+LIDO CONTEXT:
+{sales_context}
+
+TRANSCRIPT:
+{transcript}
+
+Extract these details:
+1. prospect_name: The person's first name to address the email to (from the transcript, not the customer_name provided)
+2. key_takeaway: The main way Lido solves their specific use case (1-2 sentences, be specific about their documents/workflow)
+3. documents_per_year: Estimated annual document/page volume as a number. Calculate from monthly volume if given (e.g., 1,500/month = 18,000/year)
+4. minutes_per_document: ONLY use a number if explicitly stated in the transcript (e.g., "it takes us 5 minutes per document"). If no explicit time is mentioned, use 1.
+5. urgency: "high" if they're ready to move forward quickly, "low" if they need more time/testing
+
+Return a JSON object:
+{{
+    "prospect_name": "<first name>",
+    "key_takeaway": "<specific takeaway about their use case>",
+    "documents_per_year": <number>,
+    "minutes_per_document": <number>,
+    "urgency": "<high or low>"
+}}
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+        extracted = self._parse_json_response(response)
+
+        # Step 2: Python calculates tier and ROI (not Claude)
+        docs_per_year = extracted.get("documents_per_year", 0)
+        mins_per_doc = extracted.get("minutes_per_document", 1)
+        urgency = extracted.get("urgency", "low")
+        prospect_name = extracted.get("prospect_name", customer_name)
+        key_takeaway = extracted.get("key_takeaway", "")
+
+        # Calculate tier using Python
+        tier = self._get_pricing_tier(docs_per_year)
+        package_name = tier["package"]
+        lido_cost = tier["cost"]
+        is_enterprise = tier.get("enterprise", False)
+
+        # Calculate ROI
+        total_hours = round(docs_per_year * mins_per_doc / 60)
+        manual_cost = total_hours * 30
+        net_savings = manual_cost - lido_cost
+
+        logger.info(f"  Extracted - Volume: {docs_per_year}, "
+                   f"Time/doc: {mins_per_doc}min, "
+                   f"Urgency: {urgency}")
+        logger.info(f"  Calculated - Package: {package_name}, "
+                   f"Manual cost: ${manual_cost}, "
+                   f"Net savings: ${net_savings}")
+
+        # Step 3: Build the email using Python (not Claude)
+        pricing_link = "https://docs.google.com/spreadsheets/d/1YojYeoDdSFSf7FeWXUFeoe1pW8BElGXCAfwDQxsVWGw/edit?gid=1761872706#gid=1761872706"
+
+        # Determine next steps based on enterprise status and urgency
+        if is_enterprise and urgency == "high":
+            next_steps = "I can send you the contract to execute, subscription link, and we will then personally onboard you."
+        elif is_enterprise and urgency == "low":
+            next_steps = "What most people typically like to do at this stage is set up a follow-up call to cover next steps and go through a few more tests together. In the meantime, I can send you the contract to execute to get ahead."
+        elif not is_enterprise and urgency == "high":
+            next_steps = "You can sign up for free and choose the plan you need in the billing page. I'll send you the link and we will personally onboard you."
+        else:  # not enterprise and low urgency
+            next_steps = "What most people typically like to do at this stage is set up a follow-up call to cover next steps and go through a few more tests together. In the meantime, you can sign up for free and choose the plan you need in the billing page - I'll send you the link."
+
+        # Build the email
+        email = f"""Hey {prospect_name}, great chatting with you!
+
+As we saw on the call, you can expect 100% accuracy on these documents.
+
+**Quick recap**
+- {key_takeaway}
+- Pricing overview: {pricing_link}
+- Call recording: {recording_link}
+
+Based on estimated volume of {docs_per_year:,} pages processed per year, you'd land in {package_name}. Enterprise plans include priority support and a dedicated client success manager if needed.
+
+**ROI (based on our conservative estimates)**
+- ~{docs_per_year:,} documents / year
+- ~{mins_per_doc} minute(s) / document = ~{total_hours:,} hours / year
+- At $30 / hour, that's ${manual_cost:,} / year of staff time that can be redeployed for higher value work. Net of Lido, that's ${net_savings:,} / year in recovered capacity.
+
+**Next steps**
+{next_steps}"""
+
+        return email
