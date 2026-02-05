@@ -207,6 +207,7 @@ class SheetsClient:
         next_steps: str,
         due_date: str,
         sheet_name: str = "Sheet1",
+        recording_link: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -217,6 +218,7 @@ class SheetsClient:
             next_steps: MECE-formatted next steps string.
             due_date: Due date for follow-up (YYYY-MM-DD format).
             sheet_name: Name of the sheet tab (default: "Sheet1").
+            recording_link: URL to the tldv recording.
 
         Returns:
             API response dict with update details.
@@ -230,17 +232,18 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed?
+        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link
         row_data = [
             customer_name,
             call_date,
             next_steps,
             due_date,
             "No",  # Default: not completed
+            recording_link,
         ]
 
         # Build the request
-        range_name = f"{sheet_name}!A:E"
+        range_name = f"{sheet_name}!A:F"
         body = {
             "values": [row_data],
         }
@@ -431,9 +434,10 @@ class SheetsClient:
             "Next Steps",
             "Due Date",
             "Completed?",
+            "Recording Link",
         ]
 
-        range_name = f"{sheet_name}!A1:E1"
+        range_name = f"{sheet_name}!A1:F1"
         body = {"values": [headers]}
 
         try:

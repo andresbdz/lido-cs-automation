@@ -631,6 +631,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     next_steps=next_steps.get("next_steps", ""),
                     due_date=next_steps.get("due_date", ""),
                     sheet_name=next_steps_sheet,
+                    recording_link=recording.recording_link or "",
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
@@ -1070,6 +1071,7 @@ async def test_mock_endpoint():
                 call_date=call_date,
                 next_steps=mock_next_steps["next_steps"],
                 due_date=mock_next_steps["due_date"],
+                recording_link="https://tldv.io/app/meetings/mock-recording-123",
             )
             sheets_updated = True
             logger.info("Successfully wrote to Google Sheets")

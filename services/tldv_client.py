@@ -84,6 +84,7 @@ class Recording:
     invitees: Optional[list]
     transcript: Optional[list[TranscriptSegment]] = None
     highlights: Optional[list] = None
+    recording_link: Optional[str] = None
 
 
 class TldvClient:
@@ -332,6 +333,7 @@ class TldvClient:
             duration=meeting_data.get("duration"),
             organizer=meeting_data.get("organizer"),
             invitees=meeting_data.get("invitees", []),
+            recording_link=meeting_data.get("url"),
         )
 
         # Fetch transcript if requested
