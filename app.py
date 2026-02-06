@@ -565,10 +565,10 @@ def process_recording(recording_id: str) -> ProcessingResult:
 
     # Determine target sheets based on classification
     if recording_type == "cs":
-        next_steps_sheet = "Sheet1"
+        next_steps_sheet = "Customer Success"
         kb_sheet = "Knowledge Base"
     else:  # sales
-        next_steps_sheet = "Sheet2"
+        next_steps_sheet = "Sales"
         kb_sheet = "Sales Knowledge Base"
 
     logger.info(f"Recording classified as '{recording_type}' -> sheets: {next_steps_sheet}, {kb_sheet}")
@@ -875,6 +875,115 @@ async def remove_processed_recording(recording_id: str):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Recording {recording_id} not found in processed list"
             )
+
+
+@app.get("/recordings")
+async def list_recent_recordings(
+    query: Optional[str] = None,
+    limit: int = 20,
+):
+    """
+    List recent recordings from tldv.
+
+    Use this to find recording IDs for manual processing.
+    Optionally filter by query string to search for specific recordings.
+    """
+    if not tldv_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TldvClient not initialized - check TLDV_API_KEY"
+        )
+
+    try:
+        recordings = await asyncio.to_thread(
+            tldv_client.list_recordings,
+            limit=min(limit, 50),
+            query=query,
+        )
+    except Exception as e:
+        logger.exception("Failed to list recordings")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch recordings: {str(e)}"
+        )
+
+    # Add processed status to each recording
+    results = []
+    for rec in recordings:
+        rec_id = rec.get("id", "")
+        results.append({
+            "id": rec_id,
+            "name": rec.get("name", "Unknown"),
+            "date": rec.get("date", rec.get("happenedAt", "")),
+            "already_processed": is_already_processed(rec_id),
+        })
+
+    return {
+        "total": len(results),
+        "recordings": results
+    }
+
+
+@app.post("/process/{recording_id}")
+async def manual_process_recording(recording_id: str, force: bool = False):
+    """
+    Manually trigger processing for a specific recording.
+
+    Args:
+        recording_id: The tldv recording ID to process.
+        force: If True, reprocess even if already processed.
+    """
+    if not tldv_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TldvClient not initialized - check TLDV_API_KEY"
+        )
+
+    # Check if already processed (unless force=True)
+    if not force and is_already_processed(recording_id):
+        return {
+            "status": "skipped",
+            "recording_id": recording_id,
+            "reason": "Already processed. Use force=true to reprocess."
+        }
+
+    # If forcing, remove from processed list first
+    if force:
+        with _tracking_lock:
+            data = load_processed_recordings()
+            if recording_id in data.get("recordings", {}):
+                del data["recordings"][recording_id]
+                save_processed_recordings(data)
+                logger.info(f"Force flag: removed {recording_id} from processed list")
+
+    logger.info(f"Manual processing triggered for recording: {recording_id}")
+
+    try:
+        result = await asyncio.to_thread(process_recording, recording_id)
+    except Exception as e:
+        logger.exception(f"Error processing recording {recording_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing recording: {str(e)}"
+        )
+
+    if result.processed:
+        mark_as_processed(
+            recording_id=recording_id,
+            title=result.title,
+            result=result.model_dump(),
+        )
+
+    return {
+        "status": "processed" if result.processed else "failed",
+        "recording_id": recording_id,
+        "title": result.title,
+        "classification": result.classification,
+        "sheets_updated": result.sheets_updated,
+        "kb_updated": result.kb_updated,
+        "qa_pairs_count": result.qa_pairs_count,
+        "error": result.error,
+    }
 
 
 @app.post("/webhook/tldv")
