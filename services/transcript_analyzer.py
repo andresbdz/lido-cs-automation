@@ -477,3 +477,90 @@ Based on estimated volume of {docs_per_year:,} pages processed per year, you'd l
 {next_steps}"""
 
         return email
+
+    def classify_marketing_worthy(self, transcript: str) -> dict:
+        """
+        Classify whether a sales call contains marketing-worthy content.
+
+        A call is marketing-worthy if it contains substantive discussion of:
+        - Lido's ROI (time savings, cost savings, efficiency gains)
+        - Lido's value proposition
+        - How Lido helps compared to the prospect's current processes
+
+        The classification is conservative - only returns "Yes" when there is
+        clear, substantive discussion (not just passing mentions).
+
+        Args:
+            transcript: Full call transcript text.
+
+        Returns:
+            Dictionary with:
+                - is_marketing_worthy: "Yes" or "No"
+                - topics_covered: Summary of marketing-worthy topics (if Yes),
+                                  empty string (if No)
+        """
+        logger.info("Classifying marketing worthiness of call")
+
+        system_prompt = """You are an expert at identifying marketing-worthy content in sales calls.
+
+Your task is to determine if a call contains SUBSTANTIVE discussion that could be valuable for marketing purposes.
+
+Be CONSERVATIVE in your assessment. Only classify as marketing-worthy when there is clear, in-depth discussion - not just brief mentions or passing references.
+
+Output valid JSON only."""
+
+        user_prompt = f"""Analyze this sales call transcript and determine if it contains marketing-worthy content.
+
+TRANSCRIPT:
+{transcript}
+
+A call is marketing-worthy ONLY if it contains SUBSTANTIVE discussion (multiple exchanges or detailed explanation) of ANY of these topics where Lido is presented positively:
+
+1. **ROI Discussion**: Specific numbers, time savings, cost savings, efficiency gains
+   - Example of substantive: "We currently spend 5 hours per week on this, and Lido would cut that to 30 minutes"
+   - Example of NOT substantive: "Yeah, it would probably save us some time"
+
+2. **Value Proposition**: Clear articulation of how Lido solves their specific problems
+   - Example of substantive: Detailed walkthrough of how Lido handles their invoice processing workflow
+   - Example of NOT substantive: "Lido looks like it could help"
+
+3. **Comparison to Current Processes**: Concrete discussion of their existing workflow vs Lido
+   - Example of substantive: "Right now we manually copy data from PDFs to Excel, with Lido we'd eliminate that entirely"
+   - Example of NOT substantive: "This seems better than what we have"
+
+IMPORTANT GUIDELINES:
+- Be CONSERVATIVE: When in doubt, classify as "No"
+- Require DEPTH: Brief mentions or vague statements are NOT sufficient
+- Look for SPECIFICS: Numbers, concrete examples, detailed explanations
+- Lido must be presented POSITIVELY in the discussion
+
+Return a JSON object:
+{{
+    "is_marketing_worthy": "Yes" or "No",
+    "topics_covered": "<If Yes: 2-3 sentence summary of the specific marketing-worthy topics discussed, including any numbers or concrete examples mentioned. If No: empty string>"
+}}
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+        result = self._parse_json_response(response)
+
+        is_worthy = result.get("is_marketing_worthy", "No")
+        topics = result.get("topics_covered", "")
+
+        # Normalize the response
+        if is_worthy not in ("Yes", "No"):
+            is_worthy = "No" if is_worthy.lower() in ("no", "false", "n") else "Yes"
+
+        # If No, ensure topics is empty
+        if is_worthy == "No":
+            topics = ""
+
+        logger.info(f"Marketing worthy: {is_worthy}")
+        if topics:
+            logger.info(f"Topics: {topics[:100]}...")
+
+        return {
+            "is_marketing_worthy": is_worthy,
+            "topics_covered": topics,
+        }

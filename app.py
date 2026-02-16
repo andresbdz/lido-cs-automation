@@ -618,8 +618,10 @@ def process_recording(recording_id: str) -> ProcessingResult:
     except TranscriptAnalyzerError as e:
         logger.error(f"Failed to extract Q&A pairs: {e}")
 
-    # Generate sales follow-up email (for sales recordings only)
+    # Generate sales follow-up email and classify marketing worthiness (for sales recordings only)
     follow_up_email = ""
+    marketing_worthy = ""
+    marketing_topics = ""
     if recording_type == "sales":
         try:
             logger.info("Generating sales follow-up email...")
@@ -632,6 +634,15 @@ def process_recording(recording_id: str) -> ProcessingResult:
             logger.info("Sales follow-up email generated successfully")
         except TranscriptAnalyzerError as e:
             logger.error(f"Failed to generate sales follow-up email: {e}")
+
+        try:
+            logger.info("Classifying marketing worthiness...")
+            marketing_result = transcript_analyzer.classify_marketing_worthy(transcript_text)
+            marketing_worthy = marketing_result.get("is_marketing_worthy", "")
+            marketing_topics = marketing_result.get("topics_covered", "")
+            logger.info(f"Marketing worthy: {marketing_worthy}")
+        except TranscriptAnalyzerError as e:
+            logger.error(f"Failed to classify marketing worthiness: {e}")
 
     # Write to Google Sheets
     sheets_updated = False
@@ -648,6 +659,8 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     sheet_name=next_steps_sheet,
                     recording_link=recording.recording_link or "",
                     follow_up_email=follow_up_email,
+                    marketing_worthy=marketing_worthy,
+                    marketing_topics=marketing_topics,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
@@ -978,9 +991,8 @@ async def manual_process_recording(recording_id: str, force: bool = False):
         "status": "processed" if result.processed else "failed",
         "recording_id": recording_id,
         "title": result.title,
-        "classification": result.classification,
         "sheets_updated": result.sheets_updated,
-        "kb_updated": result.kb_updated,
+        "knowledge_base_updated": result.knowledge_base_updated,
         "qa_pairs_count": result.qa_pairs_count,
         "error": result.error,
     }
@@ -1217,6 +1229,8 @@ What most people typically like to do at this stage is set up a follow-up call t
                 due_date=mock_next_steps["due_date"],
                 recording_link="https://tldv.io/app/meetings/mock-recording-123",
                 follow_up_email=mock_follow_up_email,
+                marketing_worthy="Yes",
+                marketing_topics="ROI discussion: 80% time savings on invoice processing (~333 hours/year). Comparison to current process: replacing manual PDF-to-Excel data entry with automated extraction.",
             )
             sheets_updated = True
             logger.info("Successfully wrote to Google Sheets")

@@ -209,6 +209,8 @@ class SheetsClient:
         sheet_name: str = "Sheet1",
         recording_link: str = "",
         follow_up_email: str = "",
+        marketing_worthy: str = "",
+        marketing_topics: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -221,6 +223,8 @@ class SheetsClient:
             sheet_name: Name of the sheet tab (default: "Sheet1").
             recording_link: URL to the tldv recording.
             follow_up_email: Generated sales follow-up email (for sales calls).
+            marketing_worthy: "Yes" or "No" for marketing worthiness (sales calls).
+            marketing_topics: Summary of marketing-worthy topics (if Yes).
 
         Returns:
             API response dict with update details.
@@ -234,7 +238,7 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email
+        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered
         row_data = [
             customer_name,
             call_date,
@@ -243,10 +247,12 @@ class SheetsClient:
             "No",  # Default: not completed
             recording_link,
             follow_up_email,
+            marketing_worthy,
+            marketing_topics,
         ]
 
         # Build the request
-        range_name = f"{sheet_name}!A:G"
+        range_name = f"{sheet_name}!A:I"
         body = {
             "values": [row_data],
         }
@@ -439,9 +445,11 @@ class SheetsClient:
             "Completed?",
             "Recording Link",
             "Follow-up Email",
+            "Marketing Worthy?",
+            "[If Yes Marketing Worthy] Main Topics Covered",
         ]
 
-        range_name = f"{sheet_name}!A1:G1"
+        range_name = f"{sheet_name}!A1:I1"
         body = {"values": [headers]}
 
         try:
