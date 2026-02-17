@@ -618,10 +618,11 @@ def process_recording(recording_id: str) -> ProcessingResult:
     except TranscriptAnalyzerError as e:
         logger.error(f"Failed to extract Q&A pairs: {e}")
 
-    # Generate sales follow-up email and classify marketing worthiness (for sales recordings only)
+    # Generate sales follow-up email, classify marketing worthiness, and extract volume (for sales recordings only)
     follow_up_email = ""
     marketing_worthy = ""
     marketing_topics = ""
+    volume = ""
     if recording_type == "sales":
         try:
             logger.info("Generating sales follow-up email...")
@@ -644,6 +645,14 @@ def process_recording(recording_id: str) -> ProcessingResult:
         except TranscriptAnalyzerError as e:
             logger.error(f"Failed to classify marketing worthiness: {e}")
 
+        try:
+            logger.info("Extracting volume...")
+            volume = transcript_analyzer.extract_volume(transcript_text)
+            logger.info(f"Volume: {volume}")
+        except TranscriptAnalyzerError as e:
+            logger.error(f"Failed to extract volume: {e}")
+            volume = "NA"
+
     # Write to Google Sheets
     sheets_updated = False
     if next_steps:
@@ -661,6 +670,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     follow_up_email=follow_up_email,
                     marketing_worthy=marketing_worthy,
                     marketing_topics=marketing_topics,
+                    volume=volume,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
@@ -1231,6 +1241,7 @@ What most people typically like to do at this stage is set up a follow-up call t
                 follow_up_email=mock_follow_up_email,
                 marketing_worthy="Yes",
                 marketing_topics="ROI discussion: 80% time savings on invoice processing (~333 hours/year). Comparison to current process: replacing manual PDF-to-Excel data entry with automated extraction.",
+                volume="833 pages/month",
             )
             sheets_updated = True
             logger.info("Successfully wrote to Google Sheets")

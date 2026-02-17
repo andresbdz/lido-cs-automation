@@ -211,6 +211,7 @@ class SheetsClient:
         follow_up_email: str = "",
         marketing_worthy: str = "",
         marketing_topics: str = "",
+        volume: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -225,6 +226,7 @@ class SheetsClient:
             follow_up_email: Generated sales follow-up email (for sales calls).
             marketing_worthy: "Yes" or "No" for marketing worthiness (sales calls).
             marketing_topics: Summary of marketing-worthy topics (if Yes).
+            volume: Monthly volume string for Sales tab (e.g., "1,500 pages/month").
 
         Returns:
             API response dict with update details.
@@ -238,7 +240,7 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered
+        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
         row_data = [
             customer_name,
             call_date,
@@ -249,10 +251,11 @@ class SheetsClient:
             follow_up_email,
             marketing_worthy,
             marketing_topics,
+            volume,
         ]
 
         # Build the request
-        range_name = f"{sheet_name}!A:I"
+        range_name = f"{sheet_name}!A:J"
         body = {
             "values": [row_data],
         }
@@ -447,9 +450,10 @@ class SheetsClient:
             "Follow-up Email",
             "Marketing Worthy?",
             "[If Yes Marketing Worthy] Main Topics Covered",
+            "Volume",
         ]
 
-        range_name = f"{sheet_name}!A1:I1"
+        range_name = f"{sheet_name}!A1:J1"
         body = {"values": [headers]}
 
         try:

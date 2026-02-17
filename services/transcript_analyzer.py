@@ -478,6 +478,94 @@ Based on estimated volume of {docs_per_year:,} pages processed per year, you'd l
 
         return email
 
+    def extract_volume(self, transcript: str) -> str:
+        """
+        Extract the estimated monthly volume from a transcript.
+
+        Priority:
+        1. Monthly page volume (if mentioned)
+        2. Monthly document volume (if page volume not available)
+        3. "NA" if neither is mentioned
+
+        Args:
+            transcript: Full call transcript text.
+
+        Returns:
+            Monthly volume as a string (e.g., "1,500 pages/month" or "200 documents/month"),
+            or "NA" if not mentioned.
+        """
+        logger.info("Extracting volume from transcript")
+
+        system_prompt = """You are an expert at extracting quantitative information from sales call transcripts.
+
+Your task is to find mentions of document or page processing volume.
+
+Output valid JSON only."""
+
+        user_prompt = f"""Analyze this transcript and extract the prospect's processing volume.
+
+TRANSCRIPT:
+{transcript}
+
+Look for mentions of:
+- Number of PAGES they process (preferred)
+- Number of DOCUMENTS, invoices, forms, etc. they process (fallback if pages not mentioned)
+- Volume per day, week, month, or year
+
+Calculate the MONTHLY volume:
+- If they say "18,000 per year", calculate 18,000 ÷ 12 = 1,500 per month
+- If they say "100 per week", calculate 100 × 4 = 400 per month
+- If they say "50 per day", calculate 50 × 20 (working days) = 1,000 per month
+- If they give a range, use the midpoint
+
+Return a JSON object:
+{{
+    "monthly_pages": <number or null if pages not mentioned>,
+    "monthly_documents": <number or null if documents not mentioned>,
+    "source_quote": "<brief quote from transcript mentioning the volume, or null>"
+}}
+
+IMPORTANT:
+- "pages" refers specifically to page count
+- "documents" refers to invoices, forms, files, records, etc. (each document may have multiple pages)
+- If they only mention documents/invoices (not pages), set monthly_pages to null and use monthly_documents
+- If neither is mentioned, set both to null
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+        result = self._parse_json_response(response)
+
+        monthly_pages = result.get("monthly_pages")
+        monthly_documents = result.get("monthly_documents")
+        source = result.get("source_quote")
+
+        # Priority: pages first, then documents, then NA
+        if monthly_pages is not None:
+            try:
+                volume = int(monthly_pages)
+                volume_str = f"{volume:,} pages/month"
+                logger.info(f"Extracted page volume: {volume_str}")
+                if source:
+                    logger.info(f"Source: \"{source}\"")
+                return volume_str
+            except (TypeError, ValueError):
+                pass
+
+        if monthly_documents is not None:
+            try:
+                volume = int(monthly_documents)
+                volume_str = f"{volume:,} documents/month"
+                logger.info(f"Extracted document volume: {volume_str}")
+                if source:
+                    logger.info(f"Source: \"{source}\"")
+                return volume_str
+            except (TypeError, ValueError):
+                pass
+
+        logger.info("No volume mentioned in transcript")
+        return "NA"
+
     def classify_marketing_worthy(self, transcript: str) -> dict:
         """
         Classify whether a sales call contains marketing-worthy content.
