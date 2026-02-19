@@ -539,16 +539,14 @@ def process_recording(recording_id: str) -> ProcessingResult:
             error=f"tldv API error: {e.message}",
         )
 
-    # Extract customer name: use first non-@trylido.com attendee email, fall back to title
-    customer_name = None
+    # Extract customer name: use all non-@trylido.com attendee emails (semicolon-delimited), fall back to title
+    customer_emails = []
     if recording.invitees:
         for invitee in recording.invitees:
             email = invitee.get("email", "") if isinstance(invitee, dict) else ""
             if email and not email.endswith("@trylido.com"):
-                customer_name = email
-                break
-    if not customer_name:
-        customer_name = extract_customer_name(recording.name)
+                customer_emails.append(email)
+    customer_name = "; ".join(customer_emails) if customer_emails else extract_customer_name(recording.name)
     logger.info(f"Extracted customer name: {customer_name}")
 
     # Classify the recording
@@ -1170,18 +1168,25 @@ async def test_endpoint(payload: TestPayload):
 
 
 @app.post("/test/mock")
-async def test_mock_endpoint():
+async def test_mock_endpoint(type: str = "cs"):
     """
     Test endpoint with mock data (no actual API calls).
 
     Tests the full pipeline including Sheets and knowledge base writing.
+
+    Args:
+        type: "cs" for Customer Success tab, "sales" for Sales tab (default: "cs")
     """
-    logger.info("Mock test endpoint called")
+    if type not in ("cs", "sales"):
+        raise HTTPException(status_code=400, detail="type must be 'cs' or 'sales'")
+
+    sheet_name = "Customer Success" if type == "cs" else "Sales"
+    logger.info(f"Mock test endpoint called (type={type}, sheet={sheet_name})")
 
     # Mock data
     customer_name = "Acme Corp"
     call_date = "2024-01-15"
-    call_title = "Customer Success Check-in - Acme Corp"
+    call_title = f"{'Customer Success Check-in' if type == 'cs' else 'Sales Call'} - Acme Corp"
 
     mock_next_steps = {
         "prospect_email": "john@acme.com",
@@ -1237,6 +1242,7 @@ What most people typically like to do at this stage is set up a follow-up call t
                 call_date=call_date,
                 next_steps=mock_next_steps["next_steps"],
                 due_date=mock_next_steps["due_date"],
+                sheet_name=sheet_name,
                 recording_link="https://tldv.io/app/meetings/mock-recording-123",
                 follow_up_email=mock_follow_up_email,
                 marketing_worthy="Yes",

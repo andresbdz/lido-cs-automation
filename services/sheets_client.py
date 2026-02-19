@@ -206,7 +206,7 @@ class SheetsClient:
         call_date: str,
         next_steps: str,
         due_date: str,
-        sheet_name: str = "Sheet1",
+        sheet_name: str = "Customer Success",
         recording_link: str = "",
         follow_up_email: str = "",
         marketing_worthy: str = "",
@@ -221,7 +221,7 @@ class SheetsClient:
             call_date: Date of the call (YYYY-MM-DD format).
             next_steps: MECE-formatted next steps string.
             due_date: Due date for follow-up (YYYY-MM-DD format).
-            sheet_name: Name of the sheet tab (default: "Sheet1").
+            sheet_name: Name of the sheet tab (default: "Customer Success").
             recording_link: URL to the tldv recording.
             follow_up_email: Generated sales follow-up email (for sales calls).
             marketing_worthy: "Yes" or "No" for marketing worthiness (sales calls).
@@ -431,7 +431,7 @@ class SheetsClient:
             logger.error(f"Failed to get sheet info: {e}")
             raise SheetsAPIError(f"Failed to get sheet info: {e}")
 
-    def ensure_headers(self, sheet_name: str = "Sheet1") -> None:
+    def ensure_headers(self, sheet_name: str = "Customer Success") -> None:
         """
         Ensure the sheet has the correct headers in row 1.
 
