@@ -61,6 +61,10 @@ POLL_ENABLED = os.getenv("POLL_ENABLED", "true").lower() in ("true", "1", "yes")
 # Duplicate Processing Tracking
 # ============================================================================
 
+# How long before a "processing" entry is considered stale (in seconds)
+STALE_PROCESSING_THRESHOLD_SECONDS = 600  # 10 minutes
+
+
 def load_processed_recordings() -> dict:
     """Load processed recordings from JSON file."""
     if not PROCESSED_RECORDINGS_FILE.exists():
@@ -83,21 +87,88 @@ def save_processed_recordings(data: dict) -> None:
         logger.error(f"Error saving processed recordings: {e}")
 
 
-def is_already_processed(recording_id: str) -> bool:
-    """Check if a recording has already been processed."""
+def _is_stale_processing(entry: dict) -> bool:
+    """Check if a 'processing' entry is stale and should be retried."""
+    if entry.get("status") != "processing":
+        return False
+
+    claimed_at = entry.get("claimed_at")
+    if not claimed_at:
+        return True  # No timestamp means it's stale
+
+    try:
+        claimed_time = datetime.fromisoformat(claimed_at)
+        age_seconds = (datetime.now() - claimed_time).total_seconds()
+        return age_seconds > STALE_PROCESSING_THRESHOLD_SECONDS
+    except (ValueError, TypeError):
+        return True  # Invalid timestamp means it's stale
+
+
+def try_claim_recording(recording_id: str) -> bool:
+    """
+    Atomically check if a recording can be processed and claim it.
+
+    Returns True if the recording was successfully claimed for processing.
+    Returns False if the recording is already being processed or was completed.
+
+    This prevents race conditions where multiple requests try to process
+    the same recording simultaneously.
+    """
     with _tracking_lock:
         data = load_processed_recordings()
-        return recording_id in data.get("recordings", {})
+        if "recordings" not in data:
+            data["recordings"] = {}
+
+        existing = data["recordings"].get(recording_id)
+
+        if existing:
+            status = existing.get("status", "completed")  # Legacy entries are completed
+
+            if status == "completed":
+                logger.info(f"Recording {recording_id} already completed - skipping")
+                return False
+
+            if status == "processing":
+                if _is_stale_processing(existing):
+                    logger.warning(
+                        f"Recording {recording_id} has stale 'processing' status - reclaiming"
+                    )
+                    # Fall through to reclaim
+                else:
+                    logger.info(f"Recording {recording_id} currently being processed - skipping")
+                    return False
+
+        # Claim the recording
+        data["recordings"][recording_id] = {
+            "status": "processing",
+            "claimed_at": datetime.now().isoformat(),
+        }
+        save_processed_recordings(data)
+        logger.info(f"Claimed recording {recording_id} for processing")
+        return True
+
+
+def is_already_processed(recording_id: str) -> bool:
+    """Check if a recording has already been processed (completed status)."""
+    with _tracking_lock:
+        data = load_processed_recordings()
+        existing = data.get("recordings", {}).get(recording_id)
+        if not existing:
+            return False
+        # Legacy entries without status are considered completed
+        status = existing.get("status", "completed")
+        return status == "completed"
 
 
 def mark_as_processed(recording_id: str, title: str, result: dict) -> None:
-    """Mark a recording as processed."""
+    """Mark a recording as completed (successfully processed)."""
     with _tracking_lock:
         data = load_processed_recordings()
         if "recordings" not in data:
             data["recordings"] = {}
 
         data["recordings"][recording_id] = {
+            "status": "completed",
             "title": title,
             "processed_at": datetime.now().isoformat(),
             "sheets_updated": result.get("sheets_updated", False),
@@ -105,7 +176,20 @@ def mark_as_processed(recording_id: str, title: str, result: dict) -> None:
             "qa_pairs_count": result.get("qa_pairs_count", 0),
         }
         save_processed_recordings(data)
-        logger.info(f"Marked recording {recording_id} as processed")
+        logger.info(f"Marked recording {recording_id} as completed")
+
+
+def release_claim(recording_id: str) -> None:
+    """Release a claim on a recording (used when processing fails with transient error)."""
+    with _tracking_lock:
+        data = load_processed_recordings()
+        existing = data.get("recordings", {}).get(recording_id)
+
+        # Only release if currently in "processing" status
+        if existing and existing.get("status") == "processing":
+            del data["recordings"][recording_id]
+            save_processed_recordings(data)
+            logger.info(f"Released claim on recording {recording_id}")
 
 
 def get_all_processed() -> dict:
@@ -282,7 +366,8 @@ async def _poll_once() -> None:
         if not rec_id:
             continue
 
-        if is_already_processed(rec_id):
+        # Atomically claim the recording to prevent duplicate processing
+        if not try_claim_recording(rec_id):
             skipped_count += 1
             continue
 
@@ -292,6 +377,8 @@ async def _poll_once() -> None:
             result = await asyncio.to_thread(process_recording, rec_id)
         except Exception:
             logger.exception(f"Error processing recording {rec_id} via poll")
+            # Release claim so it can be retried later
+            release_claim(rec_id)
             continue
 
         if result.processed:
@@ -303,14 +390,17 @@ async def _poll_once() -> None:
             processed_count += 1
             logger.info(f"Poll: successfully processed '{result.title}' ({rec_id})")
         else:
-            # Mark non-transient failures (title filter, no transcript) as processed
+            # Mark non-transient failures (title filter, no transcript) as completed
             # so they aren't retried every cycle. Leave transient errors for retry.
             error_msg = (result.error or "").lower()
             is_transient = any(
                 phrase in error_msg
                 for phrase in ["api error", "authentication", "not initialized"]
             )
-            if not is_transient:
+            if is_transient:
+                # Release claim so it can be retried later
+                release_claim(rec_id)
+            else:
                 mark_as_processed(
                     recording_id=rec_id,
                     title=result.title,
@@ -960,15 +1050,7 @@ async def manual_process_recording(recording_id: str, force: bool = False):
             detail="TldvClient not initialized - check TLDV_API_KEY"
         )
 
-    # Check if already processed (unless force=True)
-    if not force and is_already_processed(recording_id):
-        return {
-            "status": "skipped",
-            "recording_id": recording_id,
-            "reason": "Already processed. Use force=true to reprocess."
-        }
-
-    # If forcing, remove from processed list first
+    # If forcing, remove from processed list first to allow reclaiming
     if force:
         with _tracking_lock:
             data = load_processed_recordings()
@@ -977,18 +1059,35 @@ async def manual_process_recording(recording_id: str, force: bool = False):
                 save_processed_recordings(data)
                 logger.info(f"Force flag: removed {recording_id} from processed list")
 
+    # Atomically claim the recording to prevent duplicate processing
+    if not try_claim_recording(recording_id):
+        return {
+            "status": "skipped",
+            "recording_id": recording_id,
+            "reason": "Already processed or currently being processed. Use force=true to reprocess."
+        }
+
     logger.info(f"Manual processing triggered for recording: {recording_id}")
 
     try:
         result = await asyncio.to_thread(process_recording, recording_id)
     except Exception as e:
         logger.exception(f"Error processing recording {recording_id}")
+        # Release claim on error
+        release_claim(recording_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing recording: {str(e)}"
         )
 
     if result.processed:
+        mark_as_processed(
+            recording_id=recording_id,
+            title=result.title,
+            result=result.model_dump(),
+        )
+    else:
+        # For manual processing, always mark as completed (user explicitly requested)
         mark_as_processed(
             recording_id=recording_id,
             title=result.title,
@@ -1082,28 +1181,45 @@ async def tldv_webhook(request: Request):
 
         logger.info(f"TranscriptReady event received for meeting: {meeting_id}")
 
-        # Check for duplicate processing
-        if is_already_processed(meeting_id):
-            logger.info(f"Recording {meeting_id} already processed - skipping")
+        # Atomically claim the recording to prevent duplicate processing
+        if not try_claim_recording(meeting_id):
+            logger.info(f"Recording {meeting_id} already claimed or processed - skipping")
             return JSONResponse(
                 status_code=status.HTTP_200_OK,
                 content={
                     "status": "already_processed",
                     "recording_id": meeting_id,
-                    "message": "This recording has already been processed",
+                    "message": "This recording has already been processed or is currently being processed",
                 }
             )
 
-        # Process the recording
+        # Process the recording (we have the claim)
         result = process_recording(meeting_id)
 
-        # Mark as processed if successful
+        # Mark as completed if successful
         if result.processed:
             mark_as_processed(
                 recording_id=meeting_id,
                 title=result.title,
                 result=result.model_dump(),
             )
+        else:
+            # For non-transient failures, mark as completed so we don't retry
+            error_msg = (result.error or "").lower()
+            is_transient = any(
+                phrase in error_msg
+                for phrase in ["api error", "authentication", "not initialized"]
+            )
+            if is_transient:
+                # Release claim so it can be retried later
+                release_claim(meeting_id)
+            else:
+                # Mark as completed (won't retry filtered/skipped recordings)
+                mark_as_processed(
+                    recording_id=meeting_id,
+                    title=result.title,
+                    result=result.model_dump(),
+                )
 
         # Return appropriate status code based on result
         if not result.processed:
@@ -1150,19 +1266,26 @@ async def test_endpoint(payload: TestPayload):
     """
     logger.info(f"Test endpoint called with recording_id: {payload.recording_id}")
 
-    # Check if already processed (but still process for testing)
-    if is_already_processed(payload.recording_id):
-        logger.info(f"Note: Recording {payload.recording_id} was previously processed")
+    # For testing, clear any existing entry first (force reprocessing)
+    with _tracking_lock:
+        data = load_processed_recordings()
+        if payload.recording_id in data.get("recordings", {}):
+            logger.info(f"Test: clearing existing entry for {payload.recording_id}")
+            del data["recordings"][payload.recording_id]
+            save_processed_recordings(data)
+
+    # Claim the recording (should always succeed since we just cleared it)
+    if not try_claim_recording(payload.recording_id):
+        logger.warning(f"Test: failed to claim {payload.recording_id} - concurrent request?")
 
     result = process_recording(payload.recording_id)
 
-    # Mark as processed if successful
-    if result.processed:
-        mark_as_processed(
-            recording_id=payload.recording_id,
-            title=result.title,
-            result=result.model_dump(),
-        )
+    # Mark as completed
+    mark_as_processed(
+        recording_id=payload.recording_id,
+        title=result.title,
+        result=result.model_dump(),
+    )
 
     return result
 
