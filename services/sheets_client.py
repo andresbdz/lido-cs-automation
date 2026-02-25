@@ -212,6 +212,7 @@ class SheetsClient:
         marketing_worthy: str = "",
         marketing_topics: str = "",
         volume: str = "",
+        owner: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -227,6 +228,7 @@ class SheetsClient:
             marketing_worthy: "Yes" or "No" for marketing worthiness (sales calls).
             marketing_topics: Summary of marketing-worthy topics (if Yes).
             volume: Monthly volume string for Sales tab (e.g., "1,500 pages/month").
+            owner: Email of the Lido salesperson running the call (for Sales tab).
 
         Returns:
             API response dict with update details.
@@ -240,22 +242,37 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # Columns: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
-        row_data = [
-            customer_name,
-            call_date,
-            next_steps,
-            due_date,
-            "No",  # Default: not completed
-            recording_link,
-            follow_up_email,
-            marketing_worthy,
-            marketing_topics,
-            volume,
-        ]
-
-        # Build the request
-        range_name = f"{sheet_name}!A:J"
+        # For Sales tab: Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
+        # For Customer Success tab: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
+        if sheet_name == "Sales":
+            row_data = [
+                owner,
+                customer_name,
+                call_date,
+                next_steps,
+                due_date,
+                "No",  # Default: not completed
+                recording_link,
+                follow_up_email,
+                marketing_worthy,
+                marketing_topics,
+                volume,
+            ]
+            range_name = f"{sheet_name}!A:K"
+        else:
+            row_data = [
+                customer_name,
+                call_date,
+                next_steps,
+                due_date,
+                "No",  # Default: not completed
+                recording_link,
+                follow_up_email,
+                marketing_worthy,
+                marketing_topics,
+                volume,
+            ]
+            range_name = f"{sheet_name}!A:J"
         body = {
             "values": [row_data],
         }
@@ -440,20 +457,36 @@ class SheetsClient:
         """
         from googleapiclient.errors import HttpError
 
-        headers = [
-            "Customer Name",
-            "Call Date",
-            "Next Steps",
-            "Due Date",
-            "Completed?",
-            "Recording Link",
-            "Follow-up Email",
-            "Marketing Worthy?",
-            "[If Yes Marketing Worthy] Main Topics Covered",
-            "Volume",
-        ]
-
-        range_name = f"{sheet_name}!A1:J1"
+        # Sales tab has Owner as the first column
+        if sheet_name == "Sales":
+            headers = [
+                "Owner",
+                "Customer Name",
+                "Call Date",
+                "Next Steps",
+                "Due Date",
+                "Completed?",
+                "Recording Link",
+                "Follow-up Email",
+                "Marketing Worthy?",
+                "[If Yes Marketing Worthy] Main Topics Covered",
+                "Volume",
+            ]
+            range_name = f"{sheet_name}!A1:K1"
+        else:
+            headers = [
+                "Customer Name",
+                "Call Date",
+                "Next Steps",
+                "Due Date",
+                "Completed?",
+                "Recording Link",
+                "Follow-up Email",
+                "Marketing Worthy?",
+                "[If Yes Marketing Worthy] Main Topics Covered",
+                "Volume",
+            ]
+            range_name = f"{sheet_name}!A1:J1"
         body = {"values": [headers]}
 
         try:

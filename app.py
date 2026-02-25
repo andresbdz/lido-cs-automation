@@ -629,6 +629,12 @@ def process_recording(recording_id: str) -> ProcessingResult:
             error=f"tldv API error: {e.message}",
         )
 
+    # Extract owner: use organizer email from the recording
+    owner = ""
+    if recording.organizer and isinstance(recording.organizer, dict):
+        owner = recording.organizer.get("email", "")
+    logger.info(f"Extracted owner: {owner}")
+
     # Extract customer name: use all non-@trylido.com attendee emails (semicolon-delimited), fall back to title
     customer_emails = []
     if recording.invitees:
@@ -749,6 +755,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
             try:
                 logger.info(f"Writing next steps to Google Sheets ({next_steps_sheet})...")
                 client.append_next_steps(
+                    owner=owner,
                     customer_name=customer_name,
                     call_date=call_date,
                     next_steps=next_steps.get("next_steps", ""),
@@ -1361,6 +1368,7 @@ Based on estimated volume of 10,000 pages processed per year, you'd land in Busi
 What most people typically like to do at this stage is set up a follow-up call to cover next steps and go through a few more tests together. In the meantime, I can send you the contract to execute to get ahead."""
 
             client.append_next_steps(
+                owner="test@trylido.com",
                 customer_name=customer_name,
                 call_date=call_date,
                 next_steps=mock_next_steps["next_steps"],
