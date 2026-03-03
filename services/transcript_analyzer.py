@@ -652,3 +652,137 @@ Return ONLY the JSON object."""
             "is_marketing_worthy": is_worthy,
             "topics_covered": topics,
         }
+
+    def extract_industry(self, transcript: str, prospect_domain: str = "") -> str:
+        """
+        Extract the industry of the prospect from a sales call transcript.
+        Falls back to checking the prospect's website if industry is unclear.
+
+        Args:
+            transcript: Full call transcript text.
+            prospect_domain: Domain of the prospect (e.g., "acme.com") for website lookup.
+
+        Returns:
+            Industry name (e.g., "Healthcare", "Financial Services", "Legal").
+            Returns "Unknown" if industry cannot be determined.
+        """
+        logger.info("Extracting industry from transcript")
+
+        system_prompt = """You are an expert at identifying business industries from sales call context.
+
+Your task is to determine the industry of the PROSPECT (not the Lido team) based on the conversation.
+
+Output valid JSON only."""
+
+        user_prompt = f"""Analyze this sales call transcript and identify the industry of the prospect.
+
+TRANSCRIPT:
+{transcript}
+
+Based on the conversation, determine what industry the prospect works in. Look for:
+- Company name mentions and context
+- Type of documents they process (invoices, medical records, legal documents, etc.)
+- Business terminology used
+- Workflow descriptions
+- Client types mentioned
+
+Common industries include (but are not limited to):
+- Healthcare / Medical
+- Financial Services / Banking
+- Legal / Law
+- Accounting / CPA
+- Insurance
+- Real Estate
+- Manufacturing
+- Retail / E-commerce
+- Technology / Software
+- Education
+- Government
+- Logistics / Supply Chain
+- Energy / Utilities
+- Construction
+- Hospitality
+
+Return a JSON object:
+{{
+    "industry": "<Industry name - be specific but concise, e.g., 'Healthcare', 'Financial Services', 'Legal'>",
+    "confidence": "high" or "low"
+}}
+
+If the industry cannot be determined from the transcript, return:
+{{
+    "industry": "Unknown",
+    "confidence": "low"
+}}
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+        result = self._parse_json_response(response)
+
+        industry = result.get("industry", "Unknown")
+        confidence = result.get("confidence", "low")
+
+        if not industry or industry.strip() == "":
+            industry = "Unknown"
+
+        # If low confidence or unknown, try to determine from prospect website
+        if (confidence == "low" or industry == "Unknown") and prospect_domain:
+            logger.info(f"Low confidence from transcript, checking website: {prospect_domain}")
+            website_industry = self._extract_industry_from_website(prospect_domain)
+            if website_industry and website_industry != "Unknown":
+                industry = website_industry
+
+        logger.info(f"Extracted industry: {industry}")
+        return industry
+
+    def _extract_industry_from_website(self, domain: str) -> str:
+        """
+        Determine industry by fetching and analyzing the prospect's website.
+
+        Args:
+            domain: Domain of the prospect (e.g., "acme.com").
+
+        Returns:
+            Industry name or "Unknown" if cannot be determined.
+        """
+        import requests
+
+        try:
+            url = f"https://{domain}"
+            logger.info(f"Fetching website: {url}")
+            response = requests.get(url, timeout=10, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; LidoBot/1.0)"
+            })
+            response.raise_for_status()
+
+            # Get first 10000 chars of HTML to avoid token limits
+            html_content = response.text[:10000]
+
+            system_prompt = """You are an expert at identifying business industries from company websites.
+Output valid JSON only."""
+
+            user_prompt = f"""Based on this website content, determine what industry this company operates in.
+
+WEBSITE CONTENT:
+{html_content}
+
+Return a JSON object:
+{{
+    "industry": "<Industry name - be specific but concise, e.g., 'Healthcare', 'Financial Services', 'Legal'>"
+}}
+
+If the industry cannot be determined, return:
+{{
+    "industry": "Unknown"
+}}
+
+Return ONLY the JSON object."""
+
+            response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+            result = self._parse_json_response(response)
+            return result.get("industry", "Unknown")
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch website {domain}: {e}")
+            return "Unknown"

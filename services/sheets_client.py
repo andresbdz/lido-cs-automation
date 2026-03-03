@@ -214,6 +214,7 @@ class SheetsClient:
         volume: str = "",
         owner: str = "",
         transcript: str = "",
+        industry: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -231,6 +232,7 @@ class SheetsClient:
             volume: Monthly volume string for Sales tab (e.g., "1,500 pages/month").
             owner: Email of the Lido salesperson running the call (for Sales tab).
             transcript: Full transcript text (only included for marketing-worthy sales calls).
+            industry: Industry of the prospect (for Sales tab).
 
         Returns:
             API response dict with update details.
@@ -244,7 +246,7 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # For Sales tab: Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered (if marketing worthy) | Transcript (if marketing worthy) | Volume
+        # For Sales tab: Owner | Customer Name | Industry | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered (if marketing worthy) | Transcript (if marketing worthy) | Volume
         # For Customer Success tab: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
         if sheet_name == "Sales":
             # Truncate transcript if over Google Sheets' 50,000 character limit
@@ -257,6 +259,7 @@ class SheetsClient:
             row_data = [
                 owner,
                 customer_name,
+                industry,
                 call_date,
                 next_steps,
                 due_date,
@@ -268,7 +271,7 @@ class SheetsClient:
                 transcript_value,
                 volume,
             ]
-            range_name = f"{sheet_name}!A:L"
+            range_name = f"{sheet_name}!A:M"
         else:
             row_data = [
                 customer_name,

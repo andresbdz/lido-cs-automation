@@ -25,7 +25,7 @@ pytest tests/test_duplicate_prevention.py -v
 ### Data Flow
 1. **Trigger** → tldv webhook (`/webhook/tldv`) OR polling fallback (every 15 min)
 2. **Classify** → CS / Sales / Skip based on meeting title keywords
-3. **Analyze** → Claude extracts: next steps, Q&A pairs, follow-up email, marketing worthiness, volume
+3. **Analyze** → Claude extracts: next steps, Q&A pairs, follow-up email, marketing worthiness, volume, industry
 4. **Store** → Google Sheets (CS tab or Sales tab) + knowledge_base.md
 
 ### Key Files
@@ -68,7 +68,7 @@ POLL_LOOKBACK_HOURS             # Default: 24
 
 ## Google Sheets Structure
 
-**Sales Tab (A-L):** Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics (if marketing worthy) | Transcript (if marketing worthy) | Volume
+**Sales Tab (A-M):** Owner | Customer Name | Industry | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics (if marketing worthy) | Transcript (if marketing worthy) | Volume
 
 **CS Tab (A-J):** Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics | Volume
 

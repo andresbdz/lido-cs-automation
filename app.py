@@ -712,11 +712,12 @@ def process_recording(recording_id: str) -> ProcessingResult:
     except TranscriptAnalyzerError as e:
         logger.error(f"Failed to extract Q&A pairs: {e}")
 
-    # Generate sales follow-up email, classify marketing worthiness, and extract volume (for sales recordings only)
+    # Generate sales follow-up email, classify marketing worthiness, extract volume, and extract industry (for sales recordings only)
     follow_up_email = ""
     marketing_worthy = ""
     marketing_topics = ""
     volume = ""
+    industry = ""
     if recording_type == "sales":
         try:
             logger.info("Generating sales follow-up email...")
@@ -745,6 +746,19 @@ def process_recording(recording_id: str) -> ProcessingResult:
             logger.info(f"Volume: {volume}")
         except TranscriptAnalyzerError as e:
             logger.error(f"Failed to extract volume: {e}")
+
+        try:
+            logger.info("Extracting industry...")
+            # Get prospect domain from first customer email for website lookup
+            prospect_domain = ""
+            if customer_emails:
+                first_email = customer_emails[0]
+                if "@" in first_email:
+                    prospect_domain = first_email.split("@")[1]
+            industry = transcript_analyzer.extract_industry(transcript_text, prospect_domain)
+            logger.info(f"Industry: {industry}")
+        except TranscriptAnalyzerError as e:
+            logger.error(f"Failed to extract industry: {e}")
             volume = "NA"
 
     # Write to Google Sheets
@@ -767,6 +781,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     marketing_topics=marketing_topics,
                     volume=volume,
                     transcript=transcript_text,
+                    industry=industry,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
