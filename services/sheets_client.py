@@ -213,6 +213,7 @@ class SheetsClient:
         marketing_topics: str = "",
         volume: str = "",
         owner: str = "",
+        transcript: str = "",
     ) -> dict:
         """
         Append a row with next steps data to the Google Sheet.
@@ -229,6 +230,7 @@ class SheetsClient:
             marketing_topics: Summary of marketing-worthy topics (if Yes).
             volume: Monthly volume string for Sales tab (e.g., "1,500 pages/month").
             owner: Email of the Lido salesperson running the call (for Sales tab).
+            transcript: Full transcript text (only included for marketing-worthy sales calls).
 
         Returns:
             API response dict with update details.
@@ -242,9 +244,16 @@ class SheetsClient:
         logger.info(f"Appending next steps for {customer_name} (call: {call_date})")
 
         # Prepare row data
-        # For Sales tab: Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
+        # For Sales tab: Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered (if marketing worthy) | Transcript (if marketing worthy) | Volume
         # For Customer Success tab: Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics Covered | Volume
         if sheet_name == "Sales":
+            # Truncate transcript if over Google Sheets' 50,000 character limit
+            transcript_value = ""
+            if marketing_worthy == "Yes" and transcript:
+                if len(transcript) > 49980:
+                    transcript_value = transcript[:49980] + "...[truncated]"
+                else:
+                    transcript_value = transcript
             row_data = [
                 owner,
                 customer_name,
@@ -255,10 +264,11 @@ class SheetsClient:
                 recording_link,
                 follow_up_email,
                 marketing_worthy,
-                marketing_topics,
+                marketing_topics if marketing_worthy == "Yes" else "",
+                transcript_value,
                 volume,
             ]
-            range_name = f"{sheet_name}!A:K"
+            range_name = f"{sheet_name}!A:L"
         else:
             row_data = [
                 customer_name,

@@ -68,7 +68,7 @@ POLL_LOOKBACK_HOURS             # Default: 24
 
 ## Google Sheets Structure
 
-**Sales Tab (A-K):** Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics | Volume
+**Sales Tab (A-L):** Owner | Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics (if marketing worthy) | Transcript (if marketing worthy) | Volume
 
 **CS Tab (A-J):** Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics | Volume
 

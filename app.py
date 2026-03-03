@@ -766,6 +766,7 @@ def process_recording(recording_id: str) -> ProcessingResult:
                     marketing_worthy=marketing_worthy,
                     marketing_topics=marketing_topics,
                     volume=volume,
+                    transcript=transcript_text,
                 )
                 sheets_updated = True
                 logger.info("Successfully updated Google Sheets")
