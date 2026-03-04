@@ -759,7 +759,41 @@ def process_recording(recording_id: str) -> ProcessingResult:
             logger.info(f"Industry: {industry}")
         except TranscriptAnalyzerError as e:
             logger.error(f"Failed to extract industry: {e}")
-            volume = "NA"
+            industry = "Unknown"
+
+        # Generate outbound email sequence for marketing-worthy calls
+        if marketing_worthy == "Yes":
+            try:
+                logger.info("Generating outbound email sequence...")
+                outbound_sequence = transcript_analyzer.generate_outbound_sequence(
+                    transcript=transcript_text,
+                    customer_name=customer_name,
+                    industry=industry,
+                    topics_covered=marketing_topics,
+                    volume=volume,
+                )
+                logger.info("Outbound email sequence generated successfully")
+
+                # Write outbound sequence to Google Sheets
+                client = get_sheets_client()
+                if client:
+                    try:
+                        logger.info("Writing outbound sequence to Google Sheets (Outbound Ideas)...")
+                        client.append_outbound_sequence(
+                            prospect=customer_name,
+                            industry=industry,
+                            themes=outbound_sequence.get("outbound_idea", ""),
+                            email_1=outbound_sequence.get("email_1", ""),
+                            email_2=outbound_sequence.get("email_2", ""),
+                            email_3=outbound_sequence.get("email_3", ""),
+                        )
+                        logger.info("Successfully wrote outbound sequence to Outbound Ideas tab")
+                    except SheetsClientError as e:
+                        logger.error(f"Failed to write outbound sequence to Google Sheets: {e}")
+                else:
+                    logger.warning("SheetsClient not available - skipping outbound sequence write")
+            except TranscriptAnalyzerError as e:
+                logger.error(f"Failed to generate outbound email sequence: {e}")
 
     # Write to Google Sheets
     sheets_updated = False

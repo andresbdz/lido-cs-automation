@@ -26,7 +26,8 @@ pytest tests/test_duplicate_prevention.py -v
 1. **Trigger** → tldv webhook (`/webhook/tldv`) OR polling fallback (every 15 min)
 2. **Classify** → CS / Sales / Skip based on meeting title keywords
 3. **Analyze** → Claude extracts: next steps, Q&A pairs, follow-up email, marketing worthiness, volume, industry
-4. **Store** → Google Sheets (CS tab or Sales tab) + knowledge_base.md
+4. **Outbound** → If marketing_worthy="Yes", generate 3-email cold outbound sequence
+5. **Store** → Google Sheets (CS tab, Sales tab, or Outbound Ideas tab) + knowledge_base.md
 
 ### Key Files
 - `app.py` - FastAPI app, webhook handlers, processing pipeline, duplicate prevention
@@ -71,6 +72,10 @@ POLL_LOOKBACK_HOURS             # Default: 24
 **Sales Tab (A-M):** Owner | Customer Name | Industry | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics (if marketing worthy) | Transcript (if marketing worthy) | Volume
 
 **CS Tab (A-J):** Customer Name | Call Date | Next Steps | Due Date | Completed? | Recording Link | Follow-up Email | Marketing Worthy? | Main Topics | Volume
+
+**Outbound Ideas Tab (A-G):** Date | Prospect | Industry | Themes | Outbound Copy - Step 1 | Outbound Copy - Step 2 | Outbound Copy - Step 3
+
+*Note: Outbound Ideas tab is auto-populated when a Sales call is classified as marketing_worthy="Yes". Contains a 3-email cold outbound sequence. "Themes" is a succinct explanation of themes to leverage that resonate with the prospect/industry.*
 
 ## Debugging
 

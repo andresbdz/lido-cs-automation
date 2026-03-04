@@ -461,6 +461,97 @@ class SheetsClient:
             logger.error(f"Failed to get sheet info: {e}")
             raise SheetsAPIError(f"Failed to get sheet info: {e}")
 
+    def append_outbound_sequence(
+        self,
+        prospect: str,
+        industry: str,
+        themes: str,
+        email_1: str,
+        email_2: str,
+        email_3: str,
+        sheet_name: str = "Outbound Ideas",
+    ) -> dict:
+        """
+        Append a row with outbound email sequence data to the Google Sheet.
+
+        Args:
+            prospect: Name of the prospect.
+            industry: Industry of the prospect.
+            themes: Themes to leverage in outbound that resonate with the prospect/industry.
+            email_1: Outbound Copy - Step 1.
+            email_2: Outbound Copy - Step 2.
+            email_3: Outbound Copy - Step 3.
+            sheet_name: Name of the sheet tab (default: "Outbound Ideas").
+
+        Returns:
+            API response dict with update details.
+
+        Raises:
+            SheetsAPIError: If the API call fails.
+        """
+        from googleapiclient.errors import HttpError
+        from datetime import datetime
+
+        logger.info(f"Appending outbound sequence for {prospect}")
+
+        # Generate date
+        date_generated = datetime.now().strftime("%Y-%m-%d")
+
+        # Prepare row data
+        # Outbound Ideas Tab (A-G): Date | Prospect | Industry | Themes | Outbound Copy - Step 1 | Outbound Copy - Step 2 | Outbound Copy - Step 3
+        row_data = [
+            date_generated,
+            prospect,
+            industry,
+            themes,
+            email_1,
+            email_2,
+            email_3,
+        ]
+
+        range_name = f"{sheet_name}!A:G"
+        body = {
+            "values": [row_data],
+        }
+
+        try:
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .append(
+                    spreadsheetId=self.sheet_id,
+                    range=range_name,
+                    valueInputOption="USER_ENTERED",
+                    insertDataOption="INSERT_ROWS",
+                    body=body,
+                )
+                .execute()
+            )
+
+            updated_range = result.get("updates", {}).get("updatedRange", "unknown")
+            logger.info(f"Successfully appended outbound sequence to {updated_range}")
+
+            return result
+
+        except HttpError as e:
+            error_message = str(e)
+            logger.error(f"Google Sheets API error (Outbound): {error_message}")
+
+            if e.resp.status == 403:
+                raise SheetsAuthenticationError(
+                    "Permission denied. Ensure the service account has edit access to the sheet."
+                )
+            elif e.resp.status == 404:
+                raise SheetsAPIError(
+                    f"Sheet not found: {self.sheet_id}. Check the GOOGLE_SHEET_ID value."
+                )
+            else:
+                raise SheetsAPIError(f"API error: {error_message}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error appending outbound sequence: {e}")
+            raise SheetsAPIError(f"Failed to append outbound sequence: {e}")
+
     def ensure_headers(self, sheet_name: str = "Customer Success") -> None:
         """
         Ensure the sheet has the correct headers in row 1.

@@ -132,6 +132,11 @@ class TranscriptAnalyzer:
         else:
             json_str = response.strip()
 
+        # Fix common JSON issues from LLM outputs
+        # Remove trailing commas before closing brackets/braces
+        json_str = re.sub(r",\s*}", "}", json_str)
+        json_str = re.sub(r",\s*\]", "]", json_str)
+
         try:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
@@ -786,3 +791,177 @@ Return ONLY the JSON object."""
         except Exception as e:
             logger.warning(f"Failed to fetch website {domain}: {e}")
             return "Unknown"
+
+    def generate_outbound_sequence(
+        self,
+        transcript: str,
+        customer_name: str,
+        industry: str,
+        topics_covered: str,
+        volume: str,
+    ) -> dict:
+        """
+        Generate a 3-email cold outbound sequence based on a marketing-worthy sales call.
+
+        The sequence follows a progression:
+        1. Email 1 (Step 1): Problem-focused, reference pain point, create curiosity
+        2. Email 2 (Step 2): Introduce Lido as solution, include ROI, social proof
+        3. Email 3 (Step 3): Clear CTA, pricing tier recommendation, urgency without pressure
+
+        Args:
+            transcript: Full call transcript text.
+            customer_name: Company or prospect name.
+            industry: Industry of the prospect.
+            topics_covered: Marketing-worthy topics from the call.
+            volume: Monthly volume string (e.g., "1,500 pages/month").
+
+        Returns:
+            Dictionary with:
+                - outbound_idea: Succinct explanation of themes to leverage in outbound
+                - email_1: Outbound Copy - Step 1
+                - email_2: Outbound Copy - Step 2
+                - email_3: Outbound Copy - Step 3
+        """
+        logger.info(f"Generating outbound email sequence for {customer_name}")
+
+        # Load sales context for product positioning
+        sales_context = self._load_sales_context()
+
+        # Parse volume to calculate ROI
+        annual_pages = 0
+        if volume and volume != "NA":
+            # Extract numeric value from volume string like "1,500 pages/month"
+            import re
+            match = re.search(r"([\d,]+)", volume)
+            if match:
+                monthly = int(match.group(1).replace(",", ""))
+                if "month" in volume.lower():
+                    annual_pages = monthly * 12
+                elif "year" in volume.lower():
+                    annual_pages = monthly
+                else:
+                    annual_pages = monthly * 12  # Default to monthly
+
+        # Step 1: Extract outbound idea (business outcomes and industry need)
+        system_prompt = """You are an expert sales analyst identifying business outcomes and industry needs from sales call transcripts.
+
+Your task is to understand what specific results prospects expect and why their industry needs Lido's document automation solution.
+
+Output valid JSON only."""
+
+        user_prompt = f"""Analyze this sales call transcript to identify expected business outcomes and why there's a clear need for Lido in this industry.
+
+TRANSCRIPT:
+{transcript}
+
+TOPICS DISCUSSED (why this call was deemed marketing-worthy):
+{topics_covered}
+
+INDUSTRY: {industry}
+
+Based on this call, answer:
+1. What specific business outcomes (time saved, cost reduced, errors eliminated, compliance improved) did this {industry} prospect care about most?
+2. Why is there a clear need for Lido in this industry? What problem are they solving?
+
+Return a JSON object:
+{{
+    "outbound_idea": "<1-2 sentences explaining the business outcomes expected and why there's a need for Lido in this industry. Be specific about results, e.g., 'Healthcare companies processing intake forms expect to save 10+ hours/week and eliminate manual data entry errors that cause billing issues.'>",
+    "pain_points": ["<pain point 1>", "<pain point 2>", "<pain point 3>"]
+}}
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.0)
+        idea_result = self._parse_json_response(response)
+        outbound_idea = idea_result.get("outbound_idea", "")
+        pain_points = idea_result.get("pain_points", [])
+
+        key_pain_points = "; ".join(pain_points) if pain_points else "Manual document processing inefficiencies"
+
+        # Step 2: Generate the 3-email sequence
+        # Build ROI context for the emails (value metrics only, NO pricing)
+        roi_context = ""
+        if annual_pages > 0:
+            hours_saved = annual_pages * 1 / 60  # Assume 1 min per page
+            roi_context = f"""
+VALUE METRICS (use these in emails - do NOT mention pricing):
+- Annual volume: {annual_pages:,} pages/year
+- Hours saved: ~{int(hours_saved):,} hours/year
+"""
+
+        system_prompt = """You are an expert B2B cold email copywriter specializing in document automation and workflow efficiency.
+
+Write compelling, personalized cold emails that:
+- Are NO MORE THAN 6 SENTENCES each (this is critical)
+- Use clear, simple language - NO JARGON
+- Use a conversational, peer-to-peer tone
+- Reference specific pain points without being salesy
+- Build curiosity and value before asking for anything
+
+Output valid JSON only."""
+
+        user_prompt = f"""Generate a 3-email cold outbound sequence for similar prospects in the {industry} industry.
+
+CONTEXT FROM SALES CALL:
+- Customer: {customer_name}
+- Industry: {industry}
+- Pain Points: {key_pain_points}
+- Topics Discussed: {topics_covered}
+{roi_context}
+
+LIDO CONTEXT:
+{sales_context}
+
+Generate 3 emails following this progression:
+
+**Email 1 - Step 1 (Problem Aware)**
+- Lead with the pain point (not with Lido)
+- Create curiosity about a better way
+- No hard sell, just empathy and intrigue
+
+**Email 2 - Step 2 (Solution Aware)**
+- Introduce Lido as the solution
+- Reference specific ROI numbers if available
+- Include social proof (mention typical results for {industry} companies)
+
+**Email 3 - Step 3 (Direct Ask)**
+- Be direct about the value proposition
+- Focus on outcomes and next steps (NOT pricing)
+- Clear call to action
+
+Return a JSON object:
+{{
+    "email_1_subject": "<subject line>",
+    "email_1_body": "<email body - MAX 6 SENTENCES, clear language, no jargon>",
+    "email_2_subject": "<subject line>",
+    "email_2_body": "<email body - MAX 6 SENTENCES, clear language, no jargon>",
+    "email_3_subject": "<subject line>",
+    "email_3_body": "<email body - MAX 6 SENTENCES, clear language, no jargon>"
+}}
+
+CRITICAL REQUIREMENTS:
+- Each email body must be NO MORE THAN 6 SENTENCES
+- Use {{{{first_name}}}} as placeholder for recipient's name
+- Use CLEAR, SIMPLE language - absolutely NO jargon or buzzwords
+- Make subject lines specific to {industry}
+- Don't use generic phrases like "I hope this email finds you well"
+- NEVER mention Lido's pricing, plans, or costs - focus on value and outcomes only
+
+Return ONLY the JSON object."""
+
+        response = self._call_api_with_retry(system_prompt, user_prompt, temperature=0.3)
+        emails_result = self._parse_json_response(response)
+
+        # Format emails with subject line included
+        email_1 = f"Subject: {emails_result.get('email_1_subject', '')}\n\n{emails_result.get('email_1_body', '')}"
+        email_2 = f"Subject: {emails_result.get('email_2_subject', '')}\n\n{emails_result.get('email_2_body', '')}"
+        email_3 = f"Subject: {emails_result.get('email_3_subject', '')}\n\n{emails_result.get('email_3_body', '')}"
+
+        logger.info(f"Generated outbound sequence with {len(pain_points)} pain points")
+
+        return {
+            "outbound_idea": outbound_idea,
+            "email_1": email_1,
+            "email_2": email_2,
+            "email_3": email_3,
+        }
